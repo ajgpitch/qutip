@@ -413,6 +413,10 @@ class HSolverDL(HEOMSolver):
         if stats: start_louvillian = timeit.default_timer()
        
         L_helems = self._add_sys_liouvillian_helems(H_sys, L_helems)
+        
+        if stats:
+            stats.add_count('L nnz', L_helems.nnz, ss_conf)
+            stats.add_count('L max matrix elem', L_helems.data.max(), ss_conf)
 
         if stats:
             stats.add_timing('Liouvillian contruct',
