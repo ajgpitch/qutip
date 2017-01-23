@@ -336,7 +336,6 @@ class HSolverDL(HEOMSolver):
                 approx_factr -= (c[k] / nu[k])
             L_bnd = -approx_factr*op.data
             L_helems = zcsr_kron(self._unit_helems, L_bnd)
-
         else:
             L_helems = fast_csr_matrix(shape=(N_he*sup_dim, N_he*sup_dim))
 
@@ -456,6 +455,7 @@ class HSolverDL(HEOMSolver):
     def _add_sys_liouvillian_helems(self, H_sys, L_helems=None):
         if L_helems is None:
             L_helems = self._sysless_helems
+            
         H_he = zcsr_kron(self._unit_helems, liouvillian(H_sys).data)
         return L_helems + H_he
         
