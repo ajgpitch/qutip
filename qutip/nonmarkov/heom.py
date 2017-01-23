@@ -323,7 +323,8 @@ class HSolverDL(HEOMSolver):
         # Turns out to be the same as nstates from state_number_enumerate
         N_he, he2idx, idx2he = enr_state_dictionaries([N_c + 1]*N_m , N_c)
 
-        unit_helems = fast_identity(N_he)
+        self._unit_helems = fast_identity(N_he)
+
         if self.bnd_cut_approx:
             # the Tanimura boundary cut off operator
             if stats:
@@ -334,7 +335,8 @@ class HSolverDL(HEOMSolver):
             for k in range(N_m):
                 approx_factr -= (c[k] / nu[k])
             L_bnd = -approx_factr*op.data
-            L_helems = zcsr_kron(unit_helems, L_bnd)
+            L_helems = zcsr_kron(self._unit_helems, L_bnd)
+
         else:
             L_helems = fast_csr_matrix(shape=(N_he*sup_dim, N_he*sup_dim))
 
@@ -402,6 +404,8 @@ class HSolverDL(HEOMSolver):
 
                     he_state_neigh[k] = n_k
 
+        self._sysless_helems = L_helems.copy()
+        
         if stats:
             stats.add_timing('hierarchy contruct',
                              timeit.default_timer() - start_helem_constr,
@@ -412,10 +416,8 @@ class HSolverDL(HEOMSolver):
         # Setup Liouvillian
         if stats: 
             start_louvillian = timeit.default_timer()
-        
-        H_he = zcsr_kron(unit_helems, liouvillian(H_sys).data)
-
-        L_helems += H_he
+       
+        L_helems = self._add_sys_liouvillian_helems(H_sys, L_helems)
 
         if stats:
             stats.add_timing('Liouvillian contruct',
@@ -447,7 +449,14 @@ class HSolverDL(HEOMSolver):
         self._sup_dim = sup_dim
         self._configured = True
 
-    def run(self, rho0, tlist):
+    def _add_sys_liouvillian_helems(self, H_sys, L_helems=None):
+        if L_helems is None:
+            L_helems = self._sysless_helems
+        H_he = zcsr_kron(self._unit_helems, liouvillian(H_sys).data)
+        return L_helems + H_he
+        
+        
+    def run(self, rho0, tlist, Hsys=None):
         """
         Function to solve for an open quantum system using the
         HEOM model.
@@ -459,6 +468,11 @@ class HSolverDL(HEOMSolver):
 
         tlist : list
             Time over which system evolves.
+            
+        Hlist : Qobj or list of Qobj
+            Optional system Hamiltonian 
+            or list of system  Hamiltonians for each timeslot
+            i.e. Hsys piecewise constant in the evolution
 
         Returns
         -------
@@ -471,6 +485,16 @@ class HSolverDL(HEOMSolver):
         sup_dim = self._sup_dim
         stats = self.stats
         r = self._ode
+        
+        if Hsys is None:
+            Hsys_list = None
+        else:
+            if isinstance(Hsys, Qobj):
+                Hsys_list = [Hsys]
+            elif hasattr(Hsys, '__iter__'):
+                Hsys_list = Hsys
+            else:
+                raise TypeError("Hsys must be Qobj or list of Qobj")
 
         if not self._configured:
             raise RuntimeError("Solver must be configured before it is run")
@@ -503,6 +527,14 @@ class HSolverDL(HEOMSolver):
         dt = np.diff(tlist)
         n_tsteps = len(tlist)
         for t_idx, t in enumerate(tlist):
+            if Hsys_list:
+                # Update the system hamiltonian if there is a new one
+                # for this timeslot
+                if len(Hsys_list) > t_idx:
+                    L_helems = self._add_sys_liouvillian_helems(
+                                                            Hsys_list[t_idx])
+                    r.set_f_params(L_helems.data, L_helems.indices, 
+                                                           L_helems.indptr)
             if t_idx < n_tsteps - 1:
                 r.integrate(r.t + dt[t_idx])
                 rho = Qobj(r.y[:sup_dim].reshape(rho0.shape), dims=rho0.dims)
