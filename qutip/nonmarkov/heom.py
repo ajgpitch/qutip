@@ -420,7 +420,8 @@ class HSolverDL(HEOMSolver):
         
         if stats:
             stats.add_count('L nnz', L_helems.nnz, ss_conf)
-            stats.add_count('L max matrix elem', L_helems.data.max(), ss_conf)
+            stats.add_count('L max matrix elem', 
+                            max(abs(np.asarray(L_helems.data.data))), ss_conf)
 
         if stats:
             stats.add_timing('Liouvillian contruct',
