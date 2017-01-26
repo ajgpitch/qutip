@@ -70,20 +70,27 @@ class ControlSolver(object):
 
     Attributes
     ----------
-    
+
     """
     #ToDo: Make this an abstract class
-    def __init__(self, evo_solver):
-        self.reset()
-        self.evo_solver = evo_solver
-    
+
     def reset(self):
         self.evo_solver = None
-        self.drift_dyn_gen = None
+        # self.drift_dyn_gen = None
         self.ctrl_dyn_gen = None
         self.initial = None
         self.target = None
         self.clear()
+
+        self._num_ctrls = 0
+
+    @property
+    def num_ctrls(self):
+        try:
+            self._num_tslots = len(self.tlist)
+        except:
+            self._num_tslots = 0
+        return self._num_tslots
 
     def apply_params(self, params=None):
         """
@@ -118,12 +125,53 @@ class ControlSolver(object):
         pass
 
 class ControlSolverPWC(ControlSolver):
-    
-    def __init__(self, evo_solver, tlist):
+
+    def __init__(self, evo_solver, fidelity_meter, tlist,
+                 ctrl_dyn_gen=None, initial_amps=None):
         self.reset()
         self.evo_solver = evo_solver
         self.tlist = tlist
-        
+        self.ctrl_dyn_gen = ctrl_dyn_gen
+        self.ctrl_amps = initial_amps
+
     def reset(self):
         ControlSolver.reset(self)
         self.tlist = None
+        self.ctrl_amps = None
+
+        self._num_tslots = 0
+        self._total_time = 0.0
+
+    @property
+    def num_tslots(self):
+        try:
+            self._num_tslots = len(self.tlist)
+        except:
+            self._num_tslots = 0
+        return self._num_tslots
+
+    @property
+    def total_time(self):
+        try:
+            self._total_time = sum(self.tlist)
+        except:
+            self._total_time = 0.0
+        return self._num_tslots
+
+    def init_solve(self):
+
+        # Check attribute types and values
+        pass
+
+    def _get_optim_params(self):
+        """Return the params to be optimised"""
+        return self.ctrl_amps.ravel()
+
+    def _set_ctrl_amp_params(self, optim_params):
+        """Set the control amps based on the optimisation parameters"""
+        try:
+            self.ctrl_amps = optim_params.reshape([self._num_tslots,
+                                                   self._num_ctrls])
+        except ValueError as e:
+            raise ValueError("Unable to set ctrl amplitude values: "
+                            "{}".format(e))

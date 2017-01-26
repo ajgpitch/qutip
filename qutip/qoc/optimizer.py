@@ -246,18 +246,15 @@ class Optimizer(object):
     
     """
 
-    def __init__(self, config, dyn, params=None):
-        self.dynamics = dyn
-        self.config = config
-        self.params = params
+    def __init__(self, ctrl_solver):
         self.reset()
-        dyn.parent = self
+        self.ctrl_solver = ctrl_solver
+        
 
     def reset(self):
         self.log_level = self.config.log_level
         self.id_text = 'OPTIM'
         self.termination_conditions = None
-        self.pulse_generator = None
         self.disp_conv_msg = False
         self.iteration_steps = None
         self.record_iteration_steps=False
@@ -271,7 +268,7 @@ class Optimizer(object):
         self.amp_ubound = None
         self.bounds = None
         self.num_iter = 0
-        self.num_fid_func_calls = 0
+        self.num_infidelity_func_calls = 0
         self.num_grad_func_calls = 0
         self.stats = None
         self.wall_time_optim_start = 0.0
@@ -378,36 +375,20 @@ class Optimizer(object):
         result.optimizer = self
         return result
 
-    def init_optim(self, term_conds):
+    def init_optim(self):
         """
         Check optimiser attribute status and passed parameters before
         running the optimisation.
         This is called by run_optimization, but could called independently
         to check the configuration.
         """
-        if term_conds is not None:
-            self.termination_conditions = term_conds
-        term_conds = self.termination_conditions
-
-        if not isinstance(term_conds, termcond.TerminationConditions):
-            raise errors.UsageError("No termination conditions for the "
-                                    "optimisation function")
 
         if not isinstance(self.dynamics, dynamics.Dynamics):
-            raise errors.UsageError("No dynamics object attribute set")
-        self.dynamics.check_ctrls_initialized()
+            raise TypeError("ctrl_solver not set")
+        self.ctrl_solver.init()
 
-        self.apply_method_params()
+        # self.apply_method_params()
 
-        if term_conds.fid_err_targ is None and term_conds.fid_goal is None:
-            raise errors.UsageError("Either the goal or the fidelity "
-                                    "error tolerance must be set")
-
-        if term_conds.fid_err_targ is None:
-            term_conds.fid_err_targ = np.abs(1 - term_conds.fid_goal)
-
-        if term_conds.fid_goal is None:
-            term_conds.fid_goal = 1 - term_conds.fid_err_targ
 
         if self.alg == 'CRAB':
             self.approx_grad = True
@@ -415,56 +396,9 @@ class Optimizer(object):
         if self.stats is not None:
             self.stats.clear()
 
-        if self.dump_to_file:
-            if self.dump is None:
-                self.dumping = 'SUMMARY'
-            self.dump.write_to_file = True
-            self.dump.create_dump_dir()
-            logger.info("Optimiser dump will be written to:\n{}".format(
-                                        self.dump.dump_dir))
-
-        if self.dump:
-            self.iter_summary = OptimIterSummary()
-        else:
-            self.iter_summary = None
-
         self.num_iter = 0
-        self.num_fid_func_calls = 0
+        self.num_infidelity_func_calls = 0
         self.num_grad_func_calls = 0
-        self.iteration_steps = None
-
-    def _build_method_options(self):
-        """
-        Creates the method_options dictionary for the scipy.optimize.minimize
-        function based on the attributes of this object and the
-        termination_conditions
-        It assumes that apply_method_params has already been run and
-        hence the method_options attribute may already contain items.
-        These values will NOT be overridden
-        """
-        tc = self.termination_conditions
-        if self.method_options is None:
-            self.method_options = {}
-        mo = self.method_options
-
-        if 'max_metric_corr' in mo and not 'maxcor' in mo:
-            mo['maxcor'] = mo['max_metric_corr']
-        elif hasattr(self, 'max_metric_corr') and not 'maxcor' in mo:
-            mo['maxcor'] = self.max_metric_corr
-        if 'accuracy_factor' in mo  and not 'ftol' in mo:
-            mo['ftol'] = mo['accuracy_factor']
-        elif hasattr(tc, 'accuracy_factor') and not 'ftol' in mo:
-            mo['ftol'] = tc.accuracy_factor
-        if tc.max_iterations > 0 and not 'maxiter' in mo:
-            mo['maxiter'] = tc.max_iterations
-        if tc.max_fid_func_calls > 0 and not 'maxfev' in mo:
-            mo['maxfev'] = tc.max_fid_func_calls
-        if tc.min_gradient_norm > 0 and not 'gtol' in mo:
-            mo['gtol'] = tc.min_gradient_norm
-        if not 'disp' in mo:
-            mo['disp'] = self.disp_conv_msg
-
-        return mo
 
     def apply_method_params(self, params=None):
         """
@@ -496,28 +430,28 @@ class Optimizer(object):
                 else:
                     self.method_options.update(unused_params)
 
-    def _build_bounds_list(self):
-        cfg = self.config
-        dyn = self.dynamics
-        n_ctrls = dyn.num_ctrls
-        self.bounds = []
-        for t in range(dyn.num_tslots):
-            for c in range(n_ctrls):
-                if isinstance(self.amp_lbound, list):
-                    lb = self.amp_lbound[c]
-                else:
-                    lb = self.amp_lbound
-                if isinstance(self.amp_ubound, list):
-                    ub = self.amp_ubound[c]
-                else:
-                    ub = self.amp_ubound
-
-                if not lb is None and np.isinf(lb):
-                    lb = None
-                if not ub is None and np.isinf(ub):
-                    ub = None
-
-                self.bounds.append((lb, ub))
+#    def _build_bounds_list(self):
+#        cfg = self.config
+#        dyn = self.dynamics
+#        n_ctrls = dyn.num_ctrls
+#        self.bounds = []
+#        for t in range(dyn.num_tslots):
+#            for c in range(n_ctrls):
+#                if isinstance(self.amp_lbound, list):
+#                    lb = self.amp_lbound[c]
+#                else:
+#                    lb = self.amp_lbound
+#                if isinstance(self.amp_ubound, list):
+#                    ub = self.amp_ubound[c]
+#                else:
+#                    ub = self.amp_ubound
+#
+#                if not lb is None and np.isinf(lb):
+#                    lb = None
+#                if not ub is None and np.isinf(ub):
+#                    ub = None
+#
+#                self.bounds.append((lb, ub))
 
     def run_optimization(self, term_conds=None):
         """
@@ -547,7 +481,7 @@ class Optimizer(object):
         the final fidelity, time evolution, reason for termination etc
         
         """
-        self.init_optim(term_conds)
+        self.init()
         term_conds = self.termination_conditions
         dyn = self.dynamics
         cfg = self.config
@@ -607,33 +541,33 @@ class Optimizer(object):
         self._add_common_result_attribs(result, st_time, end_time)
 
         return result
+#
+#    def _get_optim_var_vals(self):
+#        """
+#        Generate the 1d array that holds the current variable values
+#        of the function to be optimised
+#        By default (as used in GRAPE) these are the control amplitudes
+#        in each timeslot
+#        """
+#        return self.dynamics.ctrl_amps.reshape([-1])
+#
+#    def _get_ctrl_amps(self, optim_var_vals):
+#        """
+#        Get the control amplitudes from the current variable values
+#        of the function to be optimised.
+#        that is the 1d array that is passed from the optimisation method
+#        Note for GRAPE these are the function optimiser parameters
+#        (and this is the default)
+#        
+#        Returns
+#        -------
+#        float array[dynamics.num_tslots, dynamics.num_ctrls]
+#        """
+#        amps = optim_var_vals.reshape(self.dynamics.ctrl_amps.shape)
+#
+#        return amps
 
-    def _get_optim_var_vals(self):
-        """
-        Generate the 1d array that holds the current variable values
-        of the function to be optimised
-        By default (as used in GRAPE) these are the control amplitudes
-        in each timeslot
-        """
-        return self.dynamics.ctrl_amps.reshape([-1])
-
-    def _get_ctrl_amps(self, optim_var_vals):
-        """
-        Get the control amplitudes from the current variable values
-        of the function to be optimised.
-        that is the 1d array that is passed from the optimisation method
-        Note for GRAPE these are the function optimiser parameters
-        (and this is the default)
-        
-        Returns
-        -------
-        float array[dynamics.num_tslots, dynamics.num_ctrls]
-        """
-        amps = optim_var_vals.reshape(self.dynamics.ctrl_amps.shape)
-
-        return amps
-
-    def fid_err_func_wrapper(self, *args):
+    def get_infidelity(self, *args):
         """
         Get the fidelity error achieved using the ctrl amplitudes passed
         in as the first argument.
@@ -647,7 +581,7 @@ class Optimizer(object):
         The error is checked against the target, and the optimisation is
         terminated if the target has been achieved.
         """
-        self.num_fid_func_calls += 1
+        self.num_fidelity_func_calls += 1
         # *** update stats ***
         if self.stats is not None:
             self.stats.num_fidelity_func_calls = self.num_fid_func_calls
@@ -655,73 +589,64 @@ class Optimizer(object):
                 logger.debug("fidelity error call {}".format(
                     self.stats.num_fidelity_func_calls))
 
-        amps = self._get_ctrl_amps(args[0].copy())
-        self.dynamics.update_ctrl_amps(amps)
+        if self.optim_params_changed(args[0]):
+            self.ctrl_solver._set_ctrl_amp_params(args[0].copy())
+            self.ctrl_solver.solve()
+            
+        if self.ctrl_solver.infidelity <= self.infidelity_targ:
+            raise errors.GoalAchievedTerminate(self.ctrl_solver.infidelity)
 
-        tc = self.termination_conditions
-        err = self.dynamics.fid_computer.get_fid_err()
+        if self.num_fidelity_func_calls > self.max_fidelity_func_calls:
+            raise errors.MaxInfidelityCallTerminate()
 
-        if self.iter_summary:
-            self.iter_summary.fid_func_call_num = self.num_fid_func_calls
-            self.iter_summary.fid_err = err
+        return self.ctrl_solver.infidelity
 
-        if self.dump and self.dump.dump_fid_err:
-            self.dump.update_fid_err_log(err)
-
-        if err <= tc.fid_err_targ:
-            raise errors.GoalAchievedTerminate(err)
-
-        if self.num_fid_func_calls > tc.max_fid_func_calls:
-            raise errors.MaxFidFuncCallTerminate()
-
-        return err
-
-    def fid_err_grad_wrapper(self, *args):
-        """
-        Get the gradient of the fidelity error with respect to all of the
-        variables, i.e. the ctrl amplidutes in each timeslot
-
-        This is called by generic optimisation algorithm as the gradients of
-        func to the minimised wrt the variables. The argument is the current
-        variable values, i.e. control amplitudes, passed as
-        a flat array. Hence these are reshaped as [nTimeslots, n_ctrls]
-        and then used to update the stored ctrl values (if they have changed)
-
-        Although the optimisation algorithms have a check within them for
-        function convergence, i.e. local minima, the sum of the squares
-        of the normalised gradient is checked explicitly, and the
-        optimisation is terminated if this is below the min_gradient_norm
-        condition
-        """
-        # *** update stats ***
-        self.num_grad_func_calls += 1
-        if self.stats is not None:
-            self.stats.num_grad_func_calls = self.num_grad_func_calls
-            if self.log_level <= logging.DEBUG:
-                logger.debug("gradient call {}".format(
-                    self.stats.num_grad_func_calls))
-        amps = self._get_ctrl_amps(args[0].copy())
-        self.dynamics.update_ctrl_amps(amps)
-        fid_comp = self.dynamics.fid_computer
-        # gradient_norm_func is a pointer to the function set in the config
-        # that returns the normalised gradients
-        grad = fid_comp.get_fid_err_gradient()
-
-        if self.iter_summary:
-            self.iter_summary.grad_func_call_num = self.num_grad_func_calls
-            self.iter_summary.grad_norm = fid_comp.grad_norm
-
-        if self.dump:
-            if self.dump.dump_grad_norm:
-                self.dump.update_grad_norm_log(fid_comp.grad_norm)
-
-            if self.dump.dump_grad:
-                self.dump.update_grad_log(grad)
-
-        tc = self.termination_conditions
-        if fid_comp.grad_norm < tc.min_gradient_norm:
-            raise errors.GradMinReachedTerminate(fid_comp.grad_norm)
-        return grad.flatten()
+#    def fid_err_grad_wrapper(self, *args):
+#        """
+#        Get the gradient of the fidelity error with respect to all of the
+#        variables, i.e. the ctrl amplidutes in each timeslot
+#
+#        This is called by generic optimisation algorithm as the gradients of
+#        func to the minimised wrt the variables. The argument is the current
+#        variable values, i.e. control amplitudes, passed as
+#        a flat array. Hence these are reshaped as [nTimeslots, n_ctrls]
+#        and then used to update the stored ctrl values (if they have changed)
+#
+#        Although the optimisation algorithms have a check within them for
+#        function convergence, i.e. local minima, the sum of the squares
+#        of the normalised gradient is checked explicitly, and the
+#        optimisation is terminated if this is below the min_gradient_norm
+#        condition
+#        """
+#        # *** update stats ***
+#        self.num_grad_func_calls += 1
+#        if self.stats is not None:
+#            self.stats.num_grad_func_calls = self.num_grad_func_calls
+#            if self.log_level <= logging.DEBUG:
+#                logger.debug("gradient call {}".format(
+#                    self.stats.num_grad_func_calls))
+#        amps = self._get_ctrl_amps(args[0].copy())
+#        self.dynamics.update_ctrl_amps(amps)
+#        fid_comp = self.dynamics.fid_computer
+#        # gradient_norm_func is a pointer to the function set in the config
+#        # that returns the normalised gradients
+#        grad = fid_comp.get_fid_err_gradient()
+#
+#        if self.iter_summary:
+#            self.iter_summary.grad_func_call_num = self.num_grad_func_calls
+#            self.iter_summary.grad_norm = fid_comp.grad_norm
+#
+#        if self.dump:
+#            if self.dump.dump_grad_norm:
+#                self.dump.update_grad_norm_log(fid_comp.grad_norm)
+#
+#            if self.dump.dump_grad:
+#                self.dump.update_grad_log(grad)
+#
+#        tc = self.termination_conditions
+#        if fid_comp.grad_norm < tc.min_gradient_norm:
+#            raise errors.GradMinReachedTerminate(fid_comp.grad_norm)
+#        return grad.flatten()
 
     def iter_step_callback_func(self, *args):
         """
@@ -788,6 +713,50 @@ class Optimizer(object):
             self.stats.wall_time_optim_end = end_time
             self.stats.calculate()
             result.stats = copy.copy(self.stats)
+            
+    def compare_optim_params(self, new_amps):
+        """
+        Determine if any amplitudes have changed. If so, then mark the
+        timeslots as needing recalculation
+        Returns: True if amplitudes are the same, False if they have changed
+        """
+        changed = False
+        dyn = self.parent
+                
+        if dyn.ctrl_amps is None:
+            # Flag fidelity and gradients as needing recalculation
+            changed = True
+        else:
+            # create boolean array with same shape as ctrl_amps
+            # True where value in new_amps differs, otherwise false
+            changed_amps = dyn.ctrl_amps != new_amps
+            if np.any(changed_amps):
+                # Flag fidelity and gradients as needing recalculation
+                changed = True
+                if self.log_level <= logging.DEBUG:
+                    logger.debug("{} amplitudes changed".format(
+                        changed_amps.sum()))
+                
+                if ecs:
+                    ecs.num_amps_changed = changed_amps.sum()
+                    ecs.num_timeslots_changed = np.any(changed_amps, 1).sum()
+
+            else:
+                if self.log_level <= logging.DEBUG:
+                    logger.debug("No amplitudes changed")
+
+        # *** update stats ***
+        if dyn.stats:
+            dyn.stats.num_ctrl_amp_updates += bool(ecs.num_amps_changed)
+            dyn.stats.num_ctrl_amp_changes += ecs.num_amps_changed
+            dyn.stats.num_timeslot_changes += ecs.num_timeslots_changed
+            
+        if changed:
+            dyn.ctrl_amps = new_amps
+            dyn.flag_system_changed()
+            return False
+        else:
+            return True
 
 
 class OptimIterSummary(qtrldump.DumpSummaryItem):
