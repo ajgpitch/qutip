@@ -57,9 +57,9 @@ the maximum time allowed has been exceeded
 
 These function optimisation methods are so far from SciPy.optimize
 The two methods implemented are:
-    
+
     BFGS - Broyden–Fletcher–Goldfarb–Shanno algorithm
-        
+
         This a quasi second order Newton method. It uses successive calls to
         the gradient function to make an estimation of the curvature (Hessian)
         and hence direct its search for the function minima
@@ -68,7 +68,7 @@ The two methods implemented are:
         use subclass: OptimizerBFGS
 
     L-BFGS-B - Bounded, limited memory BFGS
-        
+
         This a version of the BFGS method where the Hessian approximation is
         only based on a set of the most recent gradient calls. It generally
         performs better where the are a large number of variables
@@ -96,12 +96,10 @@ from qutip import Qobj
 import qutip.logging_utils as logging
 logger = logging.get_logger()
 # QuTiP control modules
-import qutip.control.optimresult as optimresult
-import qutip.control.termcond as termcond
-import qutip.control.errors as errors
-import qutip.control.dynamics as dynamics
-import qutip.control.pulsegen as pulsegen
-import qutip.control.dump as qtrldump
+import qutip.qoc.optimresult as optimresult
+import qutip.qoc.terminator as terminator
+import qutip.qoc.ctrlsolver as ctrlsolver
+import qutip.qoc.pulsegen as pulsegen
 
 def _is_string(var):
     try:
@@ -125,168 +123,38 @@ class Optimizer(object):
     This class implements the fidelity, gradient and interation callback
     functions.
     All subclass objects must be initialised with a
-        
+
         OptimConfig instance - various configuration options
         Dynamics instance - describes the dynamics of the (quantum) system
                             to be control optimised
 
+    Parameters
+    ----------
+
     Attributes
     ----------
-    log_level : integer
-        level of messaging output from the logger.
-        Options are attributes of qutip.logging_utils,
-        in decreasing levels of messaging, are:
-        DEBUG_INTENSE, DEBUG_VERBOSE, DEBUG, INFO, WARN, ERROR, CRITICAL
-        Anything WARN or above is effectively 'quiet' execution,
-        assuming everything runs as expected.
-        The default NOTSET implies that the level will be taken from
-        the QuTiP settings file, which by default is WARN
 
-    params:  Dictionary
-        The key value pairs are the attribute name and value
-        Note: attributes are created if they do not exist already,
-        and are overwritten if they do.
 
-    alg : string
-        Algorithm to use in pulse optimisation.
-        Options are:
-            'GRAPE' (default) - GRadient Ascent Pulse Engineering
-            'CRAB' - Chopped RAndom Basis
-
-    alg_params : Dictionary
-        options that are specific to the pulse optim algorithm
-        that is GRAPE or CRAB
-
-    disp_conv_msg : bool
-        Set true to display a convergence message
-        (for scipy.optimize.minimize methods anyway)
-
-    optim_method : string
-        a scipy.optimize.minimize method that will be used to optimise
-        the pulse for minimum fidelity error
-
-    method_params : Dictionary
-        Options for the optim_method.
-        Note that where there is an equivalent attribute of this instance
-        or the termination_conditions (for example maxiter)
-        it will override an value in these options
-
-    approx_grad : bool
-        If set True then the method will approximate the gradient itself
-        (if it has requirement and facility for this)
-        This will mean that the fid_err_grad_wrapper will not get called
-        Note it should be left False when using the Dynamics
-        to calculate approximate gradients
-        Note it is set True automatically when the alg is CRAB
-
-    amp_lbound : float or list of floats
-        lower boundaries for the control amplitudes
-        Can be a scalar value applied to all controls
-        or a list of bounds for each control
-
-    amp_ubound : float or list of floats
-        upper boundaries for the control amplitudes
-        Can be a scalar value applied to all controls
-        or a list of bounds for each control
-
-    bounds : List of floats
-        Bounds for the parameters.
-        If not set before the run_optimization call then the list
-        is built automatically based on the amp_lbound and amp_ubound
-        attributes.
-        Setting this attribute directly allows specific bounds to be set
-        for individual parameters.
-        Note: Only some methods use bounds
-
-    dynamics : Dynamics (subclass instance)
-        describes the dynamics of the (quantum) system to be control optimised
-        (see Dynamics classes for details)
-
-    config : OptimConfig instance
-        various configuration options
-        (see OptimConfig for details)
-
-    termination_conditions : TerminationCondition instance
-        attributes determine when the optimisation will end
-
-    pulse_generator : PulseGen (subclass instance)
-        (can be) used to create initial pulses
-        not used by the class, but set by pulseoptim.create_pulse_optimizer
-
-    stats : Stats
-        attributes of which give performance stats for the optimisation
-        set to None to reduce overhead of calculating stats.
-        Note it is (usually) shared with the Dynamics instance
-
-    dump : :class:`dump.OptimDump`
-        Container for data dumped during the optimisation.
-        Can be set by specifying the dumping level or set directly.
-        Note this is mainly intended for user and a development debugging
-        but could be used for status information during a long optimisation.
-
-    dumping : string
-        level of data dumping: NONE, SUMMARY, FULL or CUSTOM
-        See property docstring for details
-
-    dump_to_file : bool
-        If set True then data will be dumped to file during the optimisation
-        dumping will be set to SUMMARY during init_optim
-        if dump_to_file is True and dumping not set.
-        Default is False
-
-    dump_dir : string
-        Basically a link to dump.dump_dir. Exists so that it can be set through
-        optim_params.
-        If dump is None then will return None or will set dumping to SUMMARY
-        when setting a path
-
-    iter_summary : :class:`OptimIterSummary`
-        Summary of the most recent iteration.
-        Note this is only set if dummping is on
-    
     """
 
     def __init__(self, ctrl_solver):
         self.reset()
         self.ctrl_solver = ctrl_solver
-        
+
 
     def reset(self):
         self.log_level = self.config.log_level
-        self.id_text = 'OPTIM'
-        self.termination_conditions = None
         self.disp_conv_msg = False
-        self.iteration_steps = None
-        self.record_iteration_steps=False
         self.alg = 'GRAPE'
-        self.alg_params = None
-        self.method = 'l_bfgs_b'
-        self.method_params = None
-        self.method_options = None
         self.approx_grad = False
         self.amp_lbound = None
         self.amp_ubound = None
         self.bounds = None
         self.num_iter = 0
-        self.num_infidelity_func_calls = 0
-        self.num_grad_func_calls = 0
-        self.stats = None
+        self.num_infidelity_calls = 0
+        self.num_grad_calls = 0
         self.wall_time_optim_start = 0.0
-
-        self.dump_to_file = False
-        self.dump = None
-        self.iter_summary = None
-
-        # AJGP 2015-04-21:
-        # These (copying from config) are here for backward compatibility
-        if hasattr(self.config, 'amp_lbound'):
-            if self.config.amp_lbound:
-                self.amp_lbound = self.config.amp_lbound
-        if hasattr(self.config, 'amp_ubound'):
-            if self.config.amp_ubound:
-                self.amp_ubound = self.config.amp_ubound
-
-        self.apply_params()
+        self.wall_time_optim_end = 0.0
 
     @property
     def log_level(self):
@@ -299,69 +167,6 @@ class Optimizer(object):
         that is call logger.setLevel(lvl)
         """
         logger.setLevel(lvl)
-
-    def apply_params(self, params=None):
-        """
-        Set object attributes based on the dictionary (if any) passed in the
-        instantiation, or passed as a parameter
-        This is called during the instantiation automatically.
-        The key value pairs are the attribute name and value
-        Note: attributes are created if they do not exist already,
-        and are overwritten if they do.
-        """
-        if not params:
-            params = self.params
-
-        if isinstance(params, dict):
-            self.params = params
-            for key in params:
-                setattr(self, key, params[key])
-
-    @property
-    def dumping(self):
-        """
-        The level of data dumping that will occur during the optimisation
-         - NONE : No processing data dumped (Default)
-         - SUMMARY : A summary at each iteration will be recorded
-         - FULL : All logs will be generated and dumped
-         - CUSTOM : Some customised level of dumping
-        When first set to CUSTOM this is equivalent to SUMMARY. It is then up
-        to the user to specify which logs are dumped
-        """
-        if self.dump is None:
-            lvl = 'NONE'
-        else:
-            lvl = self.dump.level
-
-        return lvl
-
-    @dumping.setter
-    def dumping(self, value):
-        if value is None:
-            self.dump = None
-        else:
-            if not _is_string(value):
-                raise TypeError("Value must be string value")
-            lvl = value.upper()
-            if lvl == 'NONE':
-                self.dump = None
-            else:
-                if not isinstance(self.dump, qtrldump.OptimDump):
-                    self.dump = qtrldump.OptimDump(self, level=lvl)
-                else:
-                    self.dump.level = lvl
-    @property
-    def dump_dir(self):
-        if self.dump:
-            return self.dump.dump_dir
-        else:
-            return None
-
-    @dump_dir.setter
-    def dump_dir(self, value):
-        if not self.dump:
-            self.dumping = 'SUMMARY'
-        self.dump.dump_dir = value
 
     def _create_result(self):
         """
@@ -383,52 +188,17 @@ class Optimizer(object):
         to check the configuration.
         """
 
-        if not isinstance(self.dynamics, dynamics.Dynamics):
+        if not isinstance(self.ctrl_solver, dynamics.Dynamics):
             raise TypeError("ctrl_solver not set")
-        self.ctrl_solver.init()
+        self.ctrl_solver.init_solve()
 
         # self.apply_method_params()
 
 
-        if self.alg == 'CRAB':
-            self.approx_grad = True
-
-        if self.stats is not None:
-            self.stats.clear()
-
+        self.approx_grad = True
         self.num_iter = 0
-        self.num_infidelity_func_calls = 0
-        self.num_grad_func_calls = 0
-
-    def apply_method_params(self, params=None):
-        """
-        Loops through all the method_params
-        (either passed here or the method_params attribute)
-        If the name matches an attribute of this object or the
-        termination conditions object, then the value of this attribute
-        is set. Otherwise it is assumed to a method_option for the
-        scipy.optimize.minimize function
-        """
-        if not params:
-            params = self.method_params
-
-        if isinstance(params, dict):
-            self.method_params = params
-            unused_params = {}
-            for key in params:
-                val = params[key]
-                if hasattr(self, key):
-                    setattr(self, key, val)
-                if hasattr(self.termination_conditions, key):
-                    setattr(self.termination_conditions, key, val)
-                else:
-                    unused_params[key] = val
-
-            if len(unused_params) > 0:
-                if not isinstance(self.method_options, dict):
-                    self.method_options = unused_params
-                else:
-                    self.method_options.update(unused_params)
+        self.num_infidelity_calls = 0
+        self.num_grad_calls = 0
 
 #    def _build_bounds_list(self):
 #        cfg = self.config
@@ -453,7 +223,7 @@ class Optimizer(object):
 #
 #                self.bounds.append((lb, ub))
 
-    def run_optimization(self, term_conds=None):
+    def run_optimization(self):
         """
         This default function optimisation method is a wrapper to the
         scipy.optimize.minimize function.
@@ -479,25 +249,11 @@ class Optimizer(object):
 
         The result is returned in an OptimResult object, which includes
         the final fidelity, time evolution, reason for termination etc
-        
+
         """
-        self.init()
-        term_conds = self.termination_conditions
-        dyn = self.dynamics
-        cfg = self.config
-        self.optim_var_vals = self._get_optim_var_vals()
-        st_time = timeit.default_timer()
-        self.wall_time_optimize_start = st_time
-
-        if self.stats is not None:
-            self.stats.wall_time_optim_start = st_time
-            self.stats.wall_time_optim_end = 0.0
-            self.stats.num_iter = 0
-
-        if self.bounds is None:
-            self._build_bounds_list()
-
-        self._build_method_options()
+        self.init_optim()
+        self.optim_params = self.ctrl_solver._get_optim_params()
+        self.wall_time_optimize_start = timeit.default_timer()
 
         result = self._create_result()
 
@@ -519,11 +275,11 @@ class Optimizer(object):
                 method=self.method,
                 jac=jac,
                 bounds=self.bounds,
-                options=self.method_options,
-                callback=self.iter_step_callback_func)
+#                options=self.method_options,
+                callback=self._iter_step)
 
-            amps = self._get_ctrl_amps(opt_res.x)
-            dyn.update_ctrl_amps(amps)
+            self.ctrl_solver._set_ctrl_amp_params(opt_res.x.copy())
+
             result.termination_reason = opt_res.message
             # Note the iterations are counted in this object as well
             # so there are compared here for interest sake only
@@ -532,13 +288,12 @@ class Optimizer(object):
                             " does not match the number reported {} "
                             "by {}".format(self.num_iter, opt_res.nit,
                                             self.method))
-            result.num_iter = opt_res.nit
 
-        except errors.OptimizationTerminate as except_term:
+        except terminator.OptimizationTerminate as except_term:
             self._interpret_term_exception(except_term, result)
 
-        end_time = timeit.default_timer()
-        self._add_common_result_attribs(result, st_time, end_time)
+        self.wall_time_optimize_end = timeit.default_timer()
+        result._end_optim_update(self)
 
         return result
 #
@@ -558,7 +313,7 @@ class Optimizer(object):
 #        that is the 1d array that is passed from the optimisation method
 #        Note for GRAPE these are the function optimiser parameters
 #        (and this is the default)
-#        
+#
 #        Returns
 #        -------
 #        float array[dynamics.num_tslots, dynamics.num_ctrls]
@@ -567,7 +322,7 @@ class Optimizer(object):
 #
 #        return amps
 
-    def get_infidelity(self, *args):
+    def _get_infidelity(self, *args):
         """
         Get the fidelity error achieved using the ctrl amplitudes passed
         in as the first argument.
@@ -589,15 +344,15 @@ class Optimizer(object):
                 logger.debug("fidelity error call {}".format(
                     self.stats.num_fidelity_func_calls))
 
-        if self.optim_params_changed(args[0]):
+        if self._compare_optim_params(args[0]):
             self.ctrl_solver._set_ctrl_amp_params(args[0].copy())
             self.ctrl_solver.solve()
-            
+
         if self.ctrl_solver.infidelity <= self.infidelity_targ:
-            raise errors.GoalAchievedTerminate(self.ctrl_solver.infidelity)
+            raise terminator.GoalAchievedTerminate(self.ctrl_solver.infidelity)
 
         if self.num_fidelity_func_calls > self.max_fidelity_func_calls:
-            raise errors.MaxInfidelityCallTerminate()
+            raise terminator.MaxInfidelityCallTerminate()
 
         return self.ctrl_solver.infidelity
 
@@ -645,10 +400,10 @@ class Optimizer(object):
 #
 #        tc = self.termination_conditions
 #        if fid_comp.grad_norm < tc.min_gradient_norm:
-#            raise errors.GradMinReachedTerminate(fid_comp.grad_norm)
+#            raise terminator.GradMinReachedTerminate(fid_comp.grad_norm)
 #        return grad.flatten()
 
-    def iter_step_callback_func(self, *args):
+    def _iter_step(self, *args):
         """
         Check the elapsed wall time for the optimisation run so far.
         Terminate if this has exceeded the maximum allowed time
@@ -660,21 +415,8 @@ class Optimizer(object):
 
         wall_time = timeit.default_timer() - self.wall_time_optimize_start
 
-        if self.iter_summary:
-            self.iter_summary.iter_num = self.num_iter
-            self.iter_summary.wall_time = wall_time
-
-        if self.dump and self.dump.dump_summary:
-            self.dump.add_iter_summary()
-
-        tc = self.termination_conditions
-
-        if wall_time > tc.max_wall_time:
-            raise errors.MaxWallTimeTerminate()
-
-        # *** update stats ***
-        if self.stats is not None:
-            self.stats.num_iter = self.num_iter
+        if wall_time > self.max_wall_time:
+            raise terminator.MaxWallTimeTerminate()
 
     def _interpret_term_exception(self, except_term, result):
         """
@@ -682,39 +424,17 @@ class Optimizer(object):
         during the optimisation
         """
         result.termination_reason = except_term.reason
-        if isinstance(except_term, errors.GoalAchievedTerminate):
+        if isinstance(except_term, terminator.GoalAchievedTerminate):
             result.goal_achieved = True
-        elif isinstance(except_term, errors.MaxWallTimeTerminate):
+        elif isinstance(except_term, terminator.MaxWallTimeTerminate):
             result.wall_time_limit_exceeded = True
-        elif isinstance(except_term, errors.GradMinReachedTerminate):
+        elif isinstance(except_term, terminator.GradMinReachedTerminate):
             result.grad_norm_min_reached = True
-        elif isinstance(except_term, errors.MaxFidFuncCallTerminate):
-            result.max_fid_func_exceeded = True
+        elif isinstance(except_term, terminator.MaxFidFuncCallTerminate):
+            result.max_infidelity_call_exceeded = True
 
-    def _add_common_result_attribs(self, result, st_time, end_time):
-        """
-        Update the result object attributes which are common to all
-        optimisers and outcomes
-        """
-        dyn = self.dynamics
-        result.num_iter = self.num_iter
-        result.num_fid_func_calls = self.num_fid_func_calls
-        result.wall_time = end_time - st_time
-        result.fid_err = dyn.fid_computer.get_fid_err()
-        result.grad_norm_final = dyn.fid_computer.grad_norm
-        result.final_amps = dyn.ctrl_amps
-        final_evo = dyn.full_evo
-        if isinstance(final_evo, Qobj):
-            result.evo_full_final = final_evo
-        else:
-            result.evo_full_final = Qobj(final_evo, dims=dyn.sys_dims)
-        # *** update stats ***
-        if self.stats is not None:
-            self.stats.wall_time_optim_end = end_time
-            self.stats.calculate()
-            result.stats = copy.copy(self.stats)
-            
-    def compare_optim_params(self, new_amps):
+
+    def _compare_optim_params(self, new_amps):
         """
         Determine if any amplitudes have changed. If so, then mark the
         timeslots as needing recalculation
@@ -722,7 +442,7 @@ class Optimizer(object):
         """
         changed = False
         dyn = self.parent
-                
+
         if dyn.ctrl_amps is None:
             # Flag fidelity and gradients as needing recalculation
             changed = True
@@ -736,21 +456,11 @@ class Optimizer(object):
                 if self.log_level <= logging.DEBUG:
                     logger.debug("{} amplitudes changed".format(
                         changed_amps.sum()))
-                
-                if ecs:
-                    ecs.num_amps_changed = changed_amps.sum()
-                    ecs.num_timeslots_changed = np.any(changed_amps, 1).sum()
 
             else:
                 if self.log_level <= logging.DEBUG:
                     logger.debug("No amplitudes changed")
 
-        # *** update stats ***
-        if dyn.stats:
-            dyn.stats.num_ctrl_amp_updates += bool(ecs.num_amps_changed)
-            dyn.stats.num_ctrl_amp_changes += ecs.num_amps_changed
-            dyn.stats.num_timeslot_changes += ecs.num_timeslots_changed
-            
         if changed:
             dyn.ctrl_amps = new_amps
             dyn.flag_system_changed()
@@ -759,57 +469,3 @@ class Optimizer(object):
             return True
 
 
-class OptimIterSummary(qtrldump.DumpSummaryItem):
-    """A summary of the most recent iteration of the pulse optimisation
-
-    Attributes
-    ----------
-    iter_num : int
-        Iteration number of the pulse optimisation
-
-    fid_func_call_num : int
-        Fidelity function call number of the pulse optimisation
-
-    grad_func_call_num : int
-        Gradient function call number of the pulse optimisation
-
-    fid_err : float
-        Fidelity error
-
-    grad_norm : float
-        fidelity gradient (wrt the control parameters) vector norm
-        that is the magnitude of the gradient
-
-    wall_time : float
-        Time spent computing the pulse optimisation so far
-        (in seconds of elapsed time)
-    """
-    # Note there is some duplication here with Optimizer attributes
-    # this exists solely to be copied into the summary dump
-    min_col_width = 11
-    summary_property_names = (
-        "idx", "iter_num", "fid_func_call_num", "grad_func_call_num",
-        "fid_err", "grad_norm", "wall_time"
-        )
-
-    summary_property_fmt_type = (
-        'd', 'd', 'd', 'd',
-        'g', 'g', 'g'
-        )
-
-    summary_property_fmt_prec = (
-        0, 0, 0, 0,
-        4, 4, 2
-        )
-
-    def __init__(self):
-        self.reset()
-
-    def reset(self):
-        qtrldump.DumpSummaryItem.reset(self)
-        self.iter_num = None
-        self.fid_func_call_num = None
-        self.grad_func_call_num = None
-        self.fid_err = None
-        self.grad_norm = None
-        self.wall_time = 0.0
