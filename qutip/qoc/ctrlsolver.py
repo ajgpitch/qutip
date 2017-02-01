@@ -167,7 +167,7 @@ class ControlSolverPWC(ControlSolver):
         """Return the params to be optimised"""
         return self.ctrl_amps.ravel()
 
-    def _set_ctrl_amp_params(self, optim_params):
+    def _set_ctrl_amp_params(self, optim_params, changed_param_mask):
         """Set the control amps based on the optimisation parameters"""
         try:
             self.ctrl_amps = optim_params.reshape([self._num_tslots,

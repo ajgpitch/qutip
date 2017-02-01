@@ -92,6 +92,7 @@ import scipy.optimize as spopt
 import copy
 import collections
 # QuTiP
+import qutip.settings as qset
 from qutip import Qobj
 import qutip.logging_utils as logging
 logger = logging.get_logger()
@@ -146,6 +147,8 @@ class Optimizer(object):
         self.log_level = self.config.log_level
         self.disp_conv_msg = False
         self.alg = 'GRAPE'
+        self.param_atol = qset.atol
+        self.optim_params = None
         self.approx_grad = False
         self.amp_lbound = None
         self.amp_ubound = None
@@ -344,8 +347,10 @@ class Optimizer(object):
                 logger.debug("fidelity error call {}".format(
                     self.stats.num_fidelity_func_calls))
 
-        if self._compare_optim_params(args[0]):
-            self.ctrl_solver._set_ctrl_amp_params(args[0].copy())
+        changed_param_mask = self._compare_optim_params(args[0])
+        if np.any(changed_param_mask):
+            self.ctrl_solver._set_ctrl_amp_params(args[0].copy(),
+                                                  changed_param_mask)
             self.ctrl_solver.solve()
 
         if self.ctrl_solver.infidelity <= self.infidelity_targ:
@@ -434,38 +439,38 @@ class Optimizer(object):
             result.max_infidelity_call_exceeded = True
 
 
-    def _compare_optim_params(self, new_amps):
+    def _compare_optim_params(self, new_params):
         """
-        Determine if any amplitudes have changed. If so, then mark the
-        timeslots as needing recalculation
-        Returns: True if amplitudes are the same, False if they have changed
-        """
-        changed = False
-        dyn = self.parent
+        Determine if any parameters have changed.
 
-        if dyn.ctrl_amps is None:
-            # Flag fidelity and gradients as needing recalculation
-            changed = True
+        Parameters
+        ----------
+        new_params : ndarray
+            Optimisation parameters to compare
+
+        Returns
+        -------
+#        num_changed : int
+#            Number of params changed
+
+        changed_mask : ndarray
+            bool mask of changed parameters
+        """
+
+        num_params = len(self.optim_params)
+        if self.optim_params is None:
+            #num_changed = num_params
+            changed_mask = np.empty((num_params), dtype=bool)
+            changed_mask[:] = True
         else:
-            # create boolean array with same shape as ctrl_amps
-            # True where value in new_amps differs, otherwise false
-            changed_amps = dyn.ctrl_amps != new_amps
-            if np.any(changed_amps):
-                # Flag fidelity and gradients as needing recalculation
-                changed = True
-                if self.log_level <= logging.DEBUG:
-                    logger.debug("{} amplitudes changed".format(
-                        changed_amps.sum()))
+            changed_mask = (np.abs(self.optim_params - new_params) >
+                                                            self.param_atol)
 
+        if self.log_level <= logging.DEBUG:
+            if np.any(changed_mask):
+                logger.debug("{} optim params changed".format(
+                    np.count_nonzero(changed_mask)))
             else:
-                if self.log_level <= logging.DEBUG:
-                    logger.debug("No amplitudes changed")
+                logger.debug("No optim params changed")
 
-        if changed:
-            dyn.ctrl_amps = new_amps
-            dyn.flag_system_changed()
-            return False
-        else:
-            return True
-
-
+        return changed_mask
