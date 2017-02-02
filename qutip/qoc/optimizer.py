@@ -154,7 +154,7 @@ class Optimizer(object):
         self.amp_ubound = None
         self.bounds = None
         self.num_iter = 0
-        self.num_infidelity_calls = 0
+        self.num_cost_calls = 0
         self.num_grad_calls = 0
         self.wall_time_optim_start = 0.0
         self.wall_time_optim_end = 0.0
@@ -200,7 +200,7 @@ class Optimizer(object):
 
         self.approx_grad = True
         self.num_iter = 0
-        self.num_infidelity_calls = 0
+        self.num_cost_calls = 0
         self.num_grad_calls = 0
 
 #    def _build_bounds_list(self):
@@ -325,7 +325,7 @@ class Optimizer(object):
 #
 #        return amps
 
-    def _get_infidelity(self, *args):
+    def _get_cost(self, *args):
         """
         Get the fidelity error achieved using the ctrl amplitudes passed
         in as the first argument.
@@ -353,13 +353,13 @@ class Optimizer(object):
                                                   changed_param_mask)
             self.ctrl_solver.solve()
 
-        if self.ctrl_solver.infidelity <= self.infidelity_targ:
-            raise terminator.GoalAchievedTerminate(self.ctrl_solver.infidelity)
+        if self.ctrl_solver.cost <= self.cost_targ:
+            raise terminator.GoalAchievedTerminate(self.ctrl_solver.cost)
 
         if self.num_fidelity_func_calls > self.max_fidelity_func_calls:
-            raise terminator.MaxInfidelityCallTerminate()
+            raise terminator.MaxCostCallTerminate()
 
-        return self.ctrl_solver.infidelity
+        return self.ctrl_solver.cost
 
 #    def fid_err_grad_wrapper(self, *args):
 #        """
@@ -436,7 +436,7 @@ class Optimizer(object):
         elif isinstance(except_term, terminator.GradMinReachedTerminate):
             result.grad_norm_min_reached = True
         elif isinstance(except_term, terminator.MaxFidFuncCallTerminate):
-            result.max_infidelity_call_exceeded = True
+            result.max_cost_call_exceeded = True
 
 
     def _compare_optim_params(self, new_params):

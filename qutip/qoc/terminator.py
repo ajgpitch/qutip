@@ -57,9 +57,9 @@ class GoalAchievedTerminate(OptimizationTerminate):
     during the optimisation algorithm
 
     """
-    def __init__(self, infidelity):
+    def __init__(self, cost):
         self.reason = "Goal achieved"
-        self.infidelity = infidelity
+        self.cost = cost
 
 
 class MaxWallTimeTerminate(OptimizationTerminate):
@@ -71,7 +71,7 @@ class MaxWallTimeTerminate(OptimizationTerminate):
     def __init__(self):
         self.reason = "Max wall time exceeded"
 
-class MaxInfidelityCallTerminate(OptimizationTerminate):
+class MaxCostCallTerminate(OptimizationTerminate):
     """
     Exception raised to terminate execution when the number of calls to the
     fidelity error function has exceeded the maximum

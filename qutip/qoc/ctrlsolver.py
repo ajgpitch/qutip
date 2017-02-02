@@ -160,8 +160,21 @@ class ControlSolverPWC(ControlSolver):
 
     def init_solve(self):
 
-        # Check attribute types and values
-        pass
+        # Todo: Check attribute types and values
+
+        # Initialise the containers
+        self._num_tslots = len(self.tlist)
+        #self._dyn_gen = [object for x in range(self._num_tslots)]
+        self._init_dyn_gen
+
+    def _get_combined_dyn_gen(self, k):
+
+        dg = self.evo_solver.dyn_gen.copy()
+
+
+    def _init_dyn_gen(self):
+
+        for k in range
 
     def _get_optim_params(self):
         """Return the params to be optimised"""
@@ -175,3 +188,5 @@ class ControlSolverPWC(ControlSolver):
         except ValueError as e:
             raise ValueError("Unable to set ctrl amplitude values: "
                             "{}".format(e))
+
+    def
