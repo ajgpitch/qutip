@@ -76,21 +76,19 @@ class ControlSolver(object):
 
     def reset(self):
         self.evo_solver = None
-        # self.drift_dyn_gen = None
+        self.fidelity_meter = None
+        self.drift_dyn_gen = None
         self.ctrl_dyn_gen = None
         self.initial = None
         self.target = None
         self.clear()
 
+        self._initialized = False
+        self._ctrls_initialized = False
         self._num_ctrls = 0
 
-    @property
-    def num_ctrls(self):
-        try:
-            self._num_tslots = len(self.tlist)
-        except:
-            self._num_tslots = 0
-        return self._num_tslots
+    def clear(self):
+        self.cost = np.inf
 
     def apply_params(self, params=None):
         """
@@ -121,8 +119,94 @@ class ControlSolver(object):
         """
         logger.setLevel(lvl)
 
-    def clear(self):
-        pass
+    @property
+    def initialized(self):
+        return self._initialized
+
+    @property
+    def ctrls_initialized(self):
+        return self._ctrls_initialized
+
+    @property
+    def drift_dyn_gen(self):
+        """Drift or 'system' dynamics generator, e.g Hamiltonian"""
+        return self._get_drift_dyn_gen()
+
+    def _get_drift_dyn_gen(self):
+        if self.evo_solver is not None:
+            return self.evo_solver.dyn_gen
+        else:
+            return None
+
+    @property
+    def num_ctrls(self):
+        """Number of control operators"""
+        return self._get_num_ctrls()
+
+    def _get_num_ctrls(self):
+        try:
+            self._num_ctrls = len(self.ctrl_dyn_gen)
+        except:
+            self._num_ctrls = 0
+        return self._num_ctrls
+
+    def _get_ctrl_dyn_gen(self, t, j):
+        # t parameter may be used in some overriding methods for some
+        # time dependent ctrls
+        return self.ctrl_dyn_gen[j]
+
+    def _check_drift(self):
+        # In separate function, as may be overridden
+        # Assumes initial has already been checked
+        if not isinstance(self.drift_dyn_gen, Qobj):
+            raise TypeError("'drift_dyn_gen' must be a Qobj, check evo_solver")
+        if not self.drift_dyn_gen.isoper:
+            raise TypeError("'drift_dyn_gen' must be an operator, "
+                            "check evo_solver")
+
+        # This check is not valid for all evo_solvers
+        # Should be moved to the evo_solver
+#        if self.drift_dyn_gen.dims[1] != self.initial.dims[0]:
+#                        raise TypeError("Incompatible quantum object dimensions "
+#                                        "for 'drift_dyn_gen' and 'initial'")
+
+    def _check_ctrls(self):
+        # In separate function, as may be overridden
+        # Assumes that _check_drift has already been called
+        if self._num_ctrls == 0:
+            logger.warning("No controls")
+        else:
+            for j, ctrl in enumerate(self.ctrl_dyn_gen):
+                if not isinstance(ctrl, Qobj):
+                    raise TypeError("'ctrl_dyn_gen[{}]' must be a "
+                                    "Qobj".format(j))
+                else:
+                    if ctrl.dims != self.drift_dyn_gen.dims:
+                        raise TypeError("Incompatible quantum object dimensions "
+                                        "for 'ctrl_dyn_gen[{}]' and "
+                                        "'drift_dyn_gen'".format(j))
+
+    def init_solve(self):
+        """
+        Initialise the control solver
+        Check all the attribute types and dimensional compatibility
+        """
+        self._get_num_ctrls()
+        if not isinstance(self.initial, Qobj):
+            raise TypeError("Attribute 'initial' must be a Qobj")
+
+        if not isinstance(self.target, Qobj):
+            raise TypeError("Attribute 'target' must be a Qobj")
+        else:
+            if self.target.dims != self.initial.dims:
+                raise TypeError("Incompatible quantum object dimensions "
+                                "for 'initial' and 'target'")
+
+        self._check_drift()
+        self._check_ctrls()
+
+        # self._initialized not set here, as only considered initialised
+        # when subclass init_solve has been called
 
 class ControlSolverPWC(ControlSolver):
 
@@ -130,20 +214,27 @@ class ControlSolverPWC(ControlSolver):
                  ctrl_dyn_gen=None, initial_amps=None):
         self.reset()
         self.evo_solver = evo_solver
+        self.fidelity_meter = fidelity_meter
         self.tlist = tlist
         self.ctrl_dyn_gen = ctrl_dyn_gen
-        self.ctrl_amps = initial_amps
+        if initial_amps:
+            self.init_ctrl_amps(initial_amps)
 
     def reset(self):
         ControlSolver.reset(self)
         self.tlist = None
         self.ctrl_amps = None
-
+        self.fidelity_meter = None
         self._num_tslots = 0
         self._total_time = 0.0
 
+
     @property
     def num_tslots(self):
+        """Number of timeslots"""
+        return self._get_num_tslots()
+
+    def _get_num_tslots(self):
         try:
             self._num_tslots = len(self.tlist)
         except:
@@ -160,33 +251,85 @@ class ControlSolverPWC(ControlSolver):
 
     def init_solve(self):
 
+        ControlSolver.init_solve(self)
         # Todo: Check attribute types and values
 
         # Initialise the containers
-        self._num_tslots = len(self.tlist)
+        self._get_num_tslots()
         #self._dyn_gen = [object for x in range(self._num_tslots)]
-        self._init_dyn_gen
+        #self._init_dyn_gen()
+
+        self._initialized = True
 
     def _get_combined_dyn_gen(self, k):
-
+        """Combine the drift and control dynamics generators for the timeslot"""
         dg = self.evo_solver.dyn_gen.copy()
-
+        for j in self._num_ctrls:
+            dg.data += self.ctrl_amps[k, j]*self._get_ctrl_dyn_gen(k, j).data
+        return dg
 
     def _init_dyn_gen(self):
 
-        for k in range
+        self._dyn_gen = [self._get_combined_dyn_gen(k)
+                            for k in range(self._num_tslots)]
 
     def _get_optim_params(self):
         """Return the params to be optimised"""
         return self.ctrl_amps.ravel()
 
-    def _set_ctrl_amp_params(self, optim_params, changed_param_mask):
-        """Set the control amps based on the optimisation parameters"""
+    def init_ctrl_amps(self, ctrl_amps):
+        """
+        Set the control amps based on the optimisation parameters
+
+        Parameters
+        ---------
+        ctrl_amps : array_like
+            float valued array of inital control amplitudes
+            Must be of shape (num_tslots, num_ctrls)
+        """
+
+        if not self._initialized:
+            self.init_solver()
+
+        if self._num_ctrls == 0:
+            logger.warning("No controls")
+            return
+
         try:
-            self.ctrl_amps = optim_params.reshape([self._num_tslots,
-                                                   self._num_ctrls])
-        except ValueError as e:
-            raise ValueError("Unable to set ctrl amplitude values: "
+            ctrl_amps = np.array(ctrl_amps)
+        except Exception as e:
+            raise TypeError("Unable to set ctrl amplitude values: "
                             "{}".format(e))
 
-    def
+        if (ctrl_amps.shape[0] != self._num_tslots or
+            ctrl_amps.shape[1] != self._num_ctrls):
+            raise ValueError("'ctrl_amps' must be of shape "
+                            "(num_tslots, num_ctrls)")
+
+        self.ctrl_amps = ctrl_amps
+        self._init_dyn_gen()
+
+        self._ctrls_initialized = True
+
+    def _set_ctrl_amp_params(self, optim_params, changed_param_mask):
+        """Set the control amps based on the optimisation parameters"""
+        # Assumes that the shapes are compatible, as this will have been
+        # tested in init_ctrl_amp_params
+        self.ctrl_amps = optim_params.reshape([self._num_tslots,
+                                               self._num_ctrls])
+
+        changed_amp_mask = changed_param_mask.reshape([self._num_tslots,
+                                               self._num_ctrls])
+
+        for k in self._num_tslots:
+            if np.any(changed_amp_mask[k, :]):
+                self._dyn_gen[k] = self._get_combined_dyn_gen(k)
+
+
+    def solve(self):
+        """
+        Solve the evolution with the PWC dynamics generators
+        """
+        # For now we will assume that this is the HEOM solver
+        solres = self.evo_solver.run(self.initial, self.tlist, self._dyn_gen)
+        self.cost = self.fidelity_meter(solres.states[-1], self.target)

@@ -191,7 +191,7 @@ class Optimizer(object):
         to check the configuration.
         """
 
-        if not isinstance(self.ctrl_solver, dynamics.Dynamics):
+        if not isinstance(self.ctrl_solver, ctrlsolver.ControlSolver):
             raise TypeError("ctrl_solver not set")
         self.ctrl_solver.init_solve()
 
