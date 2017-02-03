@@ -100,7 +100,7 @@ logger = logging.get_logger()
 import qutip.qoc.optimresult as optimresult
 import qutip.qoc.terminator as terminator
 import qutip.qoc.ctrlsolver as ctrlsolver
-import qutip.qoc.pulsegen as pulsegen
+#import qutip.qoc.pulsegen as pulsegen
 
 def _is_string(var):
     try:
@@ -144,7 +144,7 @@ class Optimizer(object):
 
 
     def reset(self):
-        self.log_level = self.config.log_level
+        #self.log_level = self.config.log_level
         self.disp_conv_msg = False
         self.alg = 'GRAPE'
         self.param_atol = qset.atol
@@ -226,7 +226,7 @@ class Optimizer(object):
 #
 #                self.bounds.append((lb, ub))
 
-    def run_optimization(self):
+    def optimize_ctrls(self):
         """
         This default function optimisation method is a wrapper to the
         scipy.optimize.minimize function.
@@ -339,13 +339,13 @@ class Optimizer(object):
         The error is checked against the target, and the optimisation is
         terminated if the target has been achieved.
         """
-        self.num_fidelity_func_calls += 1
+        self.num_cost_func_calls += 1
         # *** update stats ***
         if self.stats is not None:
-            self.stats.num_fidelity_func_calls = self.num_fid_func_calls
+            self.stats.num_cost_func_calls = self.num_fid_func_calls
             if self.log_level <= logging.DEBUG:
-                logger.debug("fidelity error call {}".format(
-                    self.stats.num_fidelity_func_calls))
+                logger.debug("cost error call {}".format(
+                    self.stats.num_cost_func_calls))
 
         changed_param_mask = self._compare_optim_params(args[0])
         if np.any(changed_param_mask):
@@ -356,7 +356,7 @@ class Optimizer(object):
         if self.ctrl_solver.cost <= self.cost_targ:
             raise terminator.GoalAchievedTerminate(self.ctrl_solver.cost)
 
-        if self.num_fidelity_func_calls > self.max_fidelity_func_calls:
+        if self.num_cost_func_calls > self.max_cost_func_calls:
             raise terminator.MaxCostCallTerminate()
 
         return self.ctrl_solver.cost

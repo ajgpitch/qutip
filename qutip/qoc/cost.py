@@ -70,17 +70,17 @@ from qutip import Qobj
 import qutip.logging_utils as logging
 logger = logging.get_logger()
 # QuTiP control modules
-import qutip.control.errors as errors
 
-class FidelityMeter(object):
+
+class CostMeter(object):
     """
-    Measures fidelity of evolved compared with the target 
+    Measures fidelity of evolved compared with the target
 
     Attributes
     ----------
     """
     #ToDo: Make abstract
-    
+
     def __init__(self):
         self.reset()
 
@@ -89,14 +89,13 @@ class FidelityMeter(object):
         reset any configuration data and
         clear any temporarily held status data
         """
-        self.log_level = self.parent.log_level
-        self.id_text = 'FID_COMP_BASE'
+        #FIXME: self.log_level = self.parent.log_level
         self.dimensional_norm = 1.0
         self.fid_norm_func = None
         self.grad_norm_func = None
         self.uses_onwd_evo = False
         self.uses_onto_evo = False
-        self.apply_params()
+        #self.apply_params()
         self.clear()
 
     def clear(self):
@@ -111,27 +110,27 @@ class FidelityMeter(object):
         self.fid_err_grad_current = False
         self.grad_norm = 0.0
 
-    def apply_params(self, params=None):
-        """
-        Set object attributes based on the dictionary (if any) passed in the
-        instantiation, or passed as a parameter
-        This is called during the instantiation automatically.
-        The key value pairs are the attribute name and value
-        Note: attributes are created if they do not exist already,
-        and are overwritten if they do.
-        """
-        if not params:
-            params = self.params
-
-        if isinstance(params, dict):
-            self.params = params
-            for key in params:
-                setattr(self, key, params[key])
+#    def apply_params(self, params=None):
+#        """
+#        Set object attributes based on the dictionary (if any) passed in the
+#        instantiation, or passed as a parameter
+#        This is called during the instantiation automatically.
+#        The key value pairs are the attribute name and value
+#        Note: attributes are created if they do not exist already,
+#        and are overwritten if they do.
+#        """
+#        if not params:
+#            params = self.params
+#
+#        if isinstance(params, dict):
+#            self.params = params
+#            for key in params:
+#                setattr(self, key, params[key])
 
     @property
     def log_level(self):
-        return logger.level        
-        
+        return logger.level
+
     @log_level.setter
     def log_level(self, lvl):
         """
@@ -141,7 +140,7 @@ class FidelityMeter(object):
         logger.setLevel(lvl)
 
 
-class FidelityMeterUnit(FidelityMeter):
+class CostMeterUnitary(CostMeter):
     """
     Computes fidelity error and gradient assuming unitary dynamics, e.g.
     closed systems
@@ -152,12 +151,12 @@ class FidelityMeterUnit(FidelityMeter):
     ----------
     ignore_global_phase : bool
         Differences between target and evolved state / gate due to global
-        phase only are ignored when this is `True` (default) 
+        phase only are ignored when this is `True` (default)
 
     """
 
     def reset(self):
-        FidelityMeter.reset(self)
+        CostMeter.reset(self)
         self.uses_onto_evo = True
         self.ignore_global_phase = True
 
@@ -187,21 +186,69 @@ class FidelityMeterUnit(FidelityMeter):
         """
         if hasattr(A, 'shape'):
             norm = A.tr()
-            
+
         if self.ignore_global_phase:
             return self.scale_factor * np.abs(norm)
         else:
             return self.scale_factor * np.real(norm)
 
-    def compute_infidelity(self, final, target):
+    def compute_cost(self, final, target):
         """
 
         """
         f = (final.dag()*target).tr()
         self._fidelity_prenorm = f
         self.fidelity = self._normalize(f)
-        self.infidelity = 1.0 - self.fidelity
-        return self.infidelity
+        self.cost = 1.0 - self.fidelity
+        return self.cost
+
+class CostMeterSqFrobDiff(CostMeter):
+    """
+    Computes fidelity error and gradient
+
+    Attributes
+    ----------
 
 
+    """
 
+    def reset(self):
+        CostMeter.reset(self)
+        self.uses_onto_evo = True
+
+    def init_meter(self, ctrl_solver):
+        """
+        Check configuration and initialise the normalisation
+        """
+        self.init_normalization(ctrl_solver)
+
+    def init_normalization(self, ctrl_solver):
+        """
+        Calc norm of <Ufinal | Ufinal> to scale subsequent norms
+        When considering unitary time evolution operators, this basically
+        results in calculating the trace of the identity matrix
+        and is hence equal to the size of the target matrix
+        There may be situations where this is not the case, and hence it
+        is not assumed to be so.
+        """
+
+        self.scale_factor = 1.0
+        self.scale_factor = 1.0 / self._normalize(
+                                2.0*ctrl_solver.target.dag()*ctrl_solver.target)
+
+    def _normalize(self, A):
+        """
+
+        """
+        if hasattr(A, 'shape'):
+            norm = A.tr()
+
+        return self.scale_factor * np.real(norm)
+
+    def compute_cost(self, final, target):
+        """
+
+        """
+        diff = target - final
+        self.cost = self._normalize(diff.dag()*diff)
+        return self.cost
