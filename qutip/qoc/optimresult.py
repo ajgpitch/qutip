@@ -54,14 +54,11 @@ class OptimResult(object):
     termination_reason : string
         Description of the reason for terminating the optimisation
 
-    fidelity : float
-        final (normalised) fidelity that was achieved
+    initial_cost : float
+        Cost before optimisation starting
 
-    initial_fid_err : float
-        fidelity error before optimisation starting
-
-    fid_err : float
-        final fidelity error that was achieved
+    final_cost : float
+        final cost value that was achieved
 
     goal_achieved : boolean
         True is the fidely error achieved was below the target
@@ -93,10 +90,10 @@ class OptimResult(object):
         Time are the start of each timeslot
         with the final value being the total evolution time
 
-    initial_amps : array[num_tslots, n_ctrls]
+    initial_optim_params : array[num_tslots, n_ctrls]
         The amplitudes at the start of the optimisation
 
-    final_amps : array[num_tslots, n_ctrls]
+    final_optim_params : array[num_tslots, n_ctrls]
         The amplitudes at the end of the optimisation
 
     evo_full_final : Qobj
@@ -107,8 +104,8 @@ class OptimResult(object):
         self.reset()
 
     def reset(self):
-        self.initial_infidelity = np.Inf
-        self.final_infidelity = np.Inf
+        self.initial_cost = None
+        self.final_cost = None
         self.goal_achieved = False
         self.grad_norm_final = 0.0
         self.grad_norm_min_reached = False
@@ -123,19 +120,30 @@ class OptimResult(object):
         self.final_optim_params = None
         self.final_evo = None
 
+    def __str__(self):
+        if self.goal_achieved:
+            s = "Optimisation goal achieved."
+        else:
+            s = ("Failed to achieve optimisation goal, reason: "
+                "{}.".format(self.termination_reason))
+        s = "{} {} iterations, final cost {}".format(s, self.num_iter,
+                                                     self.final_cost)
+        return s
+
     def _end_optim_update(self, optim):
         """
         Update the result object attributes which are common to all
         optimisers and outcomes
         """
         self.num_iter = optim.num_iter
-        self.num_infidelity_calls = optim.num_infidelity_calls
-        result.wall_time = optim - st_time
-        result.fid_err = dyn.fid_computer.get_fid_err()
-        result.grad_norm_final = dyn.fid_computer.grad_norm
-        result.final_amps = dyn.ctrl_amps
-        final_evo = dyn.full_evo
-        if isinstance(final_evo, Qobj):
-            result.evo_full_final = final_evo
-        else:
-            result.evo_full_final = Qobj(final_evo, dims=dyn.sys_dims)
+        self.num_cost_calls = optim.num_cost_calls
+        self.wall_time = optim.wall_time_optim_end - optim.wall_time_optim_start
+        self.final_cost = optim.ctrl_solver.cost
+        # FIXME:
+        #self.grad_norm_final = dyn.fid_computer.grad_norm
+        self.final_optim_params = optim.ctrl_solver._get_optim_params()
+#        final_evo = dyn.full_evo
+#        if isinstance(final_evo, Qobj):
+#            result.evo_full_final = final_evo
+#        else:
+#            result.evo_full_final = Qobj(final_evo, dims=dyn.sys_dims)

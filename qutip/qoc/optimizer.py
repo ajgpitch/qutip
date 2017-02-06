@@ -144,10 +144,13 @@ class Optimizer(object):
 
 
     def reset(self):
-        #self.log_level = self.config.log_level
+        self.log_level = 20
+        self.stats = None
         self.disp_conv_msg = False
+        self.method = 'L-BFGS-B'
         self.alg = 'GRAPE'
         self.param_atol = qset.atol
+        #FIXME: make pvt
         self.optim_params = None
         self.approx_grad = False
         self.amp_lbound = None
@@ -158,6 +161,11 @@ class Optimizer(object):
         self.num_grad_calls = 0
         self.wall_time_optim_start = 0.0
         self.wall_time_optim_end = 0.0
+
+        # Default termination conditions
+        self.cost_target = 1.0e-6
+        self.max_cost_calls = 1000
+        self.max_wall_time = 600.0
 
     @property
     def log_level(self):
@@ -177,10 +185,6 @@ class Optimizer(object):
         and set the initial_amps attribute as the current amplitudes
         """
         result = optimresult.OptimResult()
-        result.initial_fid_err = self.dynamics.fid_computer.get_fid_err()
-        result.initial_amps = self.dynamics.ctrl_amps.copy()
-        result.time = self.dynamics.time
-        result.optimizer = self
         return result
 
     def init_optim(self):
@@ -254,11 +258,17 @@ class Optimizer(object):
         the final fidelity, time evolution, reason for termination etc
 
         """
+        print("Start optim")
+        self.wall_time_optim_start = timeit.default_timer()
         self.init_optim()
-        self.optim_params = self.ctrl_solver._get_optim_params()
-        self.wall_time_optimize_start = timeit.default_timer()
+        # Init these to None so that all are seen to have changed on first
+        # cost call.
+        self.optim_params = None
+        init_params = self.ctrl_solver._get_optim_params()
+        self.num_params = len(init_params)
+        print("initial params:\n{}".format(init_params))
 
-        result = self._create_result()
+        self.result = self._create_result()
 
         if self.approx_grad:
             jac=None
@@ -274,7 +284,7 @@ class Optimizer(object):
 
         try:
             opt_res = spopt.minimize(
-                self.fid_err_func_wrapper, self.optim_var_vals,
+                self._get_cost, init_params,
                 method=self.method,
                 jac=jac,
                 bounds=self.bounds,
@@ -283,7 +293,7 @@ class Optimizer(object):
 
             self.ctrl_solver._set_ctrl_amp_params(opt_res.x.copy())
 
-            result.termination_reason = opt_res.message
+            self.result.termination_reason = opt_res.message
             # Note the iterations are counted in this object as well
             # so there are compared here for interest sake only
             if self.num_iter != opt_res.nit:
@@ -293,12 +303,12 @@ class Optimizer(object):
                                             self.method))
 
         except terminator.OptimizationTerminate as except_term:
-            self._interpret_term_exception(except_term, result)
+            self._interpret_term_exception(except_term, self.result)
 
-        self.wall_time_optimize_end = timeit.default_timer()
-        result._end_optim_update(self)
+        self.wall_time_optim_end = timeit.default_timer()
+        self.result._end_optim_update(self)
 
-        return result
+        return self.result
 #
 #    def _get_optim_var_vals(self):
 #        """
@@ -339,26 +349,37 @@ class Optimizer(object):
         The error is checked against the target, and the optimisation is
         terminated if the target has been achieved.
         """
-        self.num_cost_func_calls += 1
+        self.num_cost_calls += 1
         # *** update stats ***
         if self.stats is not None:
-            self.stats.num_cost_func_calls = self.num_fid_func_calls
+            self.stats.num_cost_calls = self.num_fid_func_calls
             if self.log_level <= logging.DEBUG:
                 logger.debug("cost error call {}".format(
-                    self.stats.num_cost_func_calls))
+                    self.stats.num_cost_calls))
+
+        print(args[0])
 
         changed_param_mask = self._compare_optim_params(args[0])
         if np.any(changed_param_mask):
+            #FIXME: Try removing this copy()
             self.ctrl_solver._set_ctrl_amp_params(args[0].copy(),
                                                   changed_param_mask)
             self.ctrl_solver.solve()
 
-        if self.ctrl_solver.cost <= self.cost_targ:
+            if self.result.initial_cost is None:
+                # Assume this is the first solve
+                self.result.initial_cost = self.ctrl_solver.cost
+                self.result.initial_optim_params = args[0].copy()
+        else:
+            print("Nothing changed")
+
+        if self.ctrl_solver.cost <= self.cost_target:
             raise terminator.GoalAchievedTerminate(self.ctrl_solver.cost)
 
-        if self.num_cost_func_calls > self.max_cost_func_calls:
+        if self.num_cost_calls > self.max_cost_calls:
             raise terminator.MaxCostCallTerminate()
 
+        print("Cost {}".format(self.ctrl_solver.cost))
         return self.ctrl_solver.cost
 
 #    def fid_err_grad_wrapper(self, *args):
@@ -418,7 +439,7 @@ class Optimizer(object):
         if self.log_level <= logging.DEBUG:
             logger.debug("Iteration callback {}".format(self.num_iter))
 
-        wall_time = timeit.default_timer() - self.wall_time_optimize_start
+        wall_time = timeit.default_timer() - self.wall_time_optim_start
 
         if wall_time > self.max_wall_time:
             raise terminator.MaxWallTimeTerminate()
@@ -435,7 +456,7 @@ class Optimizer(object):
             result.wall_time_limit_exceeded = True
         elif isinstance(except_term, terminator.GradMinReachedTerminate):
             result.grad_norm_min_reached = True
-        elif isinstance(except_term, terminator.MaxFidFuncCallTerminate):
+        elif isinstance(except_term, terminator.MaxCostCallTerminate):
             result.max_cost_call_exceeded = True
 
 
@@ -457,10 +478,9 @@ class Optimizer(object):
             bool mask of changed parameters
         """
 
-        num_params = len(self.optim_params)
         if self.optim_params is None:
             #num_changed = num_params
-            changed_mask = np.empty((num_params), dtype=bool)
+            changed_mask = np.empty((self.num_params), dtype=bool)
             changed_mask[:] = True
         else:
             changed_mask = (np.abs(self.optim_params - new_params) >

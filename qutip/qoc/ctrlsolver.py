@@ -156,9 +156,11 @@ class ControlSolver(object):
         """Number of control operators"""
         return self._get_num_ctrls()
 
-    def _get_num_ctrls(self):
+    def _get_num_ctrls(self, ctrl_dyn_gen=None):
+        if ctrl_dyn_gen is None:
+            ctrl_dyn_gen = self.ctrl_dyn_gen
         try:
-            self._num_ctrls = len(self.ctrl_dyn_gen)
+            self._num_ctrls = len(ctrl_dyn_gen)
         except:
             self._num_ctrls = 0
         return self._num_ctrls
@@ -228,7 +230,7 @@ class ControlSolver(object):
             ctrl_dyn_gen = self.ctrl_dyn_gen
             desc = 'attribute'
 
-        if self._get_num_ctrls() == 0:
+        if self._get_num_ctrls(ctrl_dyn_gen) == 0:
             raise TypeError("Invalid type {} for {} 'ctrl_dyn_gen'. "
                             "Must be iterable.".format(type(ctrl_dyn_gen), desc))
         else:
@@ -248,16 +250,8 @@ class ControlSolver(object):
         Check all the attribute types and dimensional compatibility
         """
 
-        if not isinstance(self.initial, Qobj):
-            raise TypeError("Invalid type {} for attribute 'initial'. "
-                            "Must be of type {}.".format(type(self.initial),
-                                                        Qobj))
-
-        if not isinstance(self.target, Qobj):
-            raise TypeError("Invalid type {} for attribute 'target'. "
-                            "Must be of type {}.".format(type(self.initial),
-                                                        Qobj))
-
+        self._check_initial()
+        self._check_drift()
         self.cost_meter.init_normalization(self)
         self._check_drift()
         self._check_ctrls()
@@ -272,7 +266,9 @@ class ControlSolverPWC(ControlSolver):
         self.reset()
         ControlSolver.__init__(self, evo_solver, cost_meter, initial, target,
                                ctrl_dyn_gen)
+        self._check_tlist(tlist)
         self.tlist = tlist
+        #TODO: Check ctrl amps
         self.ctrl_amps = initial_amps
 
     def reset(self):
@@ -297,39 +293,44 @@ class ControlSolverPWC(ControlSolver):
             tlist = self.tlist
             desc = 'attribute'
 
-        if self._get_num_ctrls() == 0:
+        if not hasattr(tlist, '__iter__'):
             raise TypeError("Invalid type {} for {} 'tlist'. "
-                            "Must be iterable.".format(type(ctrl_dyn_gen), desc))
-        else:
-            for j, ctrl in enumerate(ctrl_dyn_gen):
-                if not isinstance(ctrl, Qobj):
-                    raise TypeError("Invalid type {} for 'ctrl_dyn_gen[{}]'. "
-                                    "Must be a {}.".format(type(ctrl), j, Qobj))
-                else:
-                    if ctrl.dims != self.drift_dyn_gen.dims:
-                        raise TypeError("Incompatible quantum object dimensions "
-                                        "for 'ctrl_dyn_gen[{}]' and "
-                                        "'drift_dyn_gen'".format(j))
+                            "Must be iterable.".format(type(tlist), desc))
 
-    def _get_num_tslots(self):
+        if self._get_num_tslots(tlist) == 0:
+            raise ValueError("Invalid value {} for {} 'tlist'. Must define "
+                            "at least one timeslot.".format(type(tlist), desc))
+
+        if self._get_total_time(tlist) == 0.0:
+            raise TypeError("total time cannot be zero")
+
+    def _get_num_tslots(self, tlist=None):
+        if tlist is None:
+            tlist = self.tlist
+
         try:
-            self._num_tslots = len(self.tlist)
+            self._num_tslots = len(tlist) - 1
         except:
             self._num_tslots = 0
         return self._num_tslots
 
     @property
     def total_time(self):
+        return self._get_total_time()
+
+    def _get_total_time(self, tlist=None):
+        if tlist is None:
+            tlist = self.tlist
         try:
-            self._total_time = sum(self.tlist)
+            self._total_time = tlist[-1]
         except:
             self._total_time = 0.0
-        return self._num_tslots
+        return self._total_time
 
     def _get_combined_dyn_gen(self, k):
         """Combine the drift and control dynamics generators for the timeslot"""
         dg = self._drift_dyn_gen.copy()
-        for j in self._num_ctrls:
+        for j in range(self._num_ctrls):
             dg.data += self.ctrl_amps[k, j]*self._get_ctrl_dyn_gen(k, j).data
         return dg
 
@@ -353,7 +354,10 @@ class ControlSolverPWC(ControlSolver):
             Must be of shape (num_tslots, num_ctrls)
         """
 
+        #TODO: Add skip checks
+
         ControlSolver.init_solve(self)
+        self._check_tlist()
 
         if ctrl_amps is None:
             ctrl_amps = self.ctrl_amps
@@ -364,10 +368,12 @@ class ControlSolverPWC(ControlSolver):
             raise TypeError("Unable to set ctrl amplitude values: "
                             "{}".format(e))
 
-        if (ctrl_amps.shape[0] != self._num_tslots or
-            ctrl_amps.shape[1] != self._num_ctrls):
+        if (len(ctrl_amps.shape) != 2 or
+            ctrl_amps.shape[0] != self.num_tslots or
+            ctrl_amps.shape[1] != self.num_ctrls):
             try:
-                ctrl_amps.reshape([self._num_tslots, self._num_ctrls])
+                ctrl_amps = ctrl_amps.reshape([self._num_tslots,
+                                               self._num_ctrls])
             except Exception as e:
                 raise ValueError("Incorrect shape {} for 'ctrl_amps'. "
                                 "Must be of shape, or reshapeable to, "
@@ -381,18 +387,18 @@ class ControlSolverPWC(ControlSolver):
 
         self._solve_initialized = True
 
-    def _set_ctrl_amp_params(self, optim_params, changed_param_mask):
+    def _set_ctrl_amp_params(self, optim_params, chg_mask=None):
         """Set the control amps based on the optimisation parameters"""
         # Assumes that the shapes are compatible, as this will have been
         # tested in init_ctrl_amp_params
         self.ctrl_amps = optim_params.reshape([self._num_tslots,
                                                self._num_ctrls])
 
-        changed_amp_mask = changed_param_mask.reshape([self._num_tslots,
-                                               self._num_ctrls])
+        if chg_mask is not None:
+            chg_mask = chg_mask.reshape([self._num_tslots, self._num_ctrls])
 
-        for k in self._num_tslots:
-            if np.any(changed_amp_mask[k, :]):
+        for k in range(self._num_tslots):
+            if chg_mask is not None and np.any(chg_mask[k, :]):
                 self._dyn_gen[k] = self._get_combined_dyn_gen(k)
 
 
@@ -405,5 +411,6 @@ class ControlSolverPWC(ControlSolver):
 
         #FIXME: For now we will assume that this is the HEOM solver
         solres = self.evo_solver.run(self.initial, self.tlist, self._dyn_gen)
-        self.cost = self.cost_meter(solres.states[-1], self.target)
+        print("Final state:\{}".format(solres.states[-1]))
+        self.cost = self.cost_meter.compute_cost(solres.states[-1], self.target)
         return self.cost
