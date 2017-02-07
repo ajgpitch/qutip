@@ -263,10 +263,10 @@ class Optimizer(object):
         self.init_optim()
         # Init these to None so that all are seen to have changed on first
         # cost call.
-        self.optim_params = None
-        init_params = self.ctrl_solver._get_optim_params()
-        self.num_params = len(init_params)
-        print("initial params:\n{}".format(init_params))
+        self.optim_params = self.ctrl_solver._get_optim_params()
+#        init_params =
+#        self.num_params = len(init_params)
+        print("initial params:\n{}".format(self.optim_params))
 
         self.result = self._create_result()
 
@@ -284,7 +284,7 @@ class Optimizer(object):
 
         try:
             opt_res = spopt.minimize(
-                self._get_cost, init_params,
+                self._get_cost, self.optim_params,
                 method=self.method,
                 jac=jac,
                 bounds=self.bounds,
@@ -364,14 +364,16 @@ class Optimizer(object):
             #FIXME: Try removing this copy()
             self.ctrl_solver._set_ctrl_amp_params(args[0].copy(),
                                                   changed_param_mask)
-            self.ctrl_solver.solve()
-
-            if self.result.initial_cost is None:
-                # Assume this is the first solve
-                self.result.initial_cost = self.ctrl_solver.cost
-                self.result.initial_optim_params = args[0].copy()
         else:
             print("Nothing changed")
+
+        if not self.ctrl_solver.is_solution_current:
+            self.ctrl_solver.solve()
+
+        if self.result.initial_cost is None:
+            # Assume this is the first solve
+            self.result.initial_cost = self.ctrl_solver.cost
+            self.result.initial_optim_params = args[0].copy()
 
         if self.ctrl_solver.cost <= self.cost_target:
             raise terminator.GoalAchievedTerminate(self.ctrl_solver.cost)

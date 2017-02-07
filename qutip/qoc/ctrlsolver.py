@@ -103,7 +103,7 @@ class ControlSolver(object):
         self._num_ctrls = 0
 
     def clear(self):
-        self.cost = np.inf
+        self.cost = None
 
     def apply_params(self, params=None):
         """
@@ -259,6 +259,11 @@ class ControlSolver(object):
         # self._initialized not set here, as only considered initialised
         # when subclass init_solve has been called
 
+    @property
+    def is_solution_current(self):
+        # Abstract
+        return False
+
 class ControlSolverPWC(ControlSolver):
 
     def __init__(self, evo_solver, cost_meter, initial, target, ctrl_dyn_gen,
@@ -278,6 +283,7 @@ class ControlSolverPWC(ControlSolver):
         self.cost_meter = None
         self._num_tslots = 0
         self._total_time = 0.0
+        self._changed_amp_mask = None
 
 
     @property
@@ -394,13 +400,29 @@ class ControlSolverPWC(ControlSolver):
         self.ctrl_amps = optim_params.reshape([self._num_tslots,
                                                self._num_ctrls])
 
-        if chg_mask is not None:
-            chg_mask = chg_mask.reshape([self._num_tslots, self._num_ctrls])
+        if chg_mask is None:
+            self._changed_amp_mask = None
+        else:
+            self._changed_amp_mask = chg_mask.reshape([self._num_tslots,
+                                                       self._num_ctrls])
 
+    def _update_dyn_gen(self):
         for k in range(self._num_tslots):
-            if chg_mask is not None and np.any(chg_mask[k, :]):
+            if (self._changed_amp_mask is None
+                    or np.any(self._changed_amp_mask[k, :])):
                 self._dyn_gen[k] = self._get_combined_dyn_gen(k)
 
+
+    @property
+    def is_solution_current(self):
+        if self.cost is None:
+            return False
+        if self._changed_amp_mask is None:
+            return True
+        if np.any(self._changed_amp_mask):
+            return False
+        else:
+            return True
 
     def solve(self, skip_init=False):
         """
@@ -408,6 +430,8 @@ class ControlSolverPWC(ControlSolver):
         """
         if not self._solve_initialized and not skip_init:
             self.init_solve()
+
+        self._update_dyn_gen()
 
         #FIXME: For now we will assume that this is the HEOM solver
         solres = self.evo_solver.run(self.initial, self.tlist, self._dyn_gen)
