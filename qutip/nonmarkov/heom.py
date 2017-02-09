@@ -39,6 +39,8 @@ hierarchy equations of motion (HEOM).
 # Authors: Neill Lambert, Anubhav Vardhan, Alexander Pitchford
 # Contact: nwlambert@gmail.com
 
+import types
+from functools import partial
 import timeit
 import numpy as np
 #from scipy.misc import factorial
@@ -80,8 +82,13 @@ class HEOMSolver(object):
 
     Attributes
     ----------
-    H_sys : Qobj
-        System Hamiltonian
+    H_sys : :class:`qutip.Qobj`
+        System Hamiltonian.
+        Static Qobj or callback function returning Qobj
+        NOTE: Assumes that H(t) is constant in each timeslice (of tlist)
+
+    args : dict
+        Dictionary of arguments passed to the time dependent Hamiltonian function
 
     coup_op : Qobj
         Operator describing the coupling between system and bath.
@@ -124,6 +131,7 @@ class HEOMSolver(object):
     exp_freq : list of complex
         Frequencies for the exponential series terms
     """
+    #TODO: Make ABC
     def __init__(self):
         raise NotImplementedError("This is a abstract class only. "
                 "Use a subclass, for example HSolverDL")
@@ -135,6 +143,7 @@ class HEOMSolver(object):
         self.planck = 1.0
         self.boltzmann = 1.0
         self.H_sys = None
+        self.args = None
         self.coup_op = None
         self.coup_strength = 0.0
         self.temperature = 1.0
@@ -145,6 +154,7 @@ class HEOMSolver(object):
         self.exp_coeff = None
         self.exp_freq = None
 
+        self.td_type = None
         self.options = None
         self.progress_bar = None
         self.stats = None
@@ -153,7 +163,7 @@ class HEOMSolver(object):
         self.configured = False
 
     def configure(self, H_sys, coup_op, coup_strength, temperature,
-                     N_cut, N_exp, planck=None, boltzmann=None,
+                     N_cut, N_exp, args=None, planck=None, boltzmann=None,
                      renorm=None, bnd_cut_approx=None,
                      options=None, progress_bar=None, stats=None):
         """
@@ -180,7 +190,23 @@ class HEOMSolver(object):
             Set to False for no stats
         """
 
-        self.H_sys = H_sys
+        self.H0 = None
+        if isinstance(H_sys, Qobj):
+            self.td_type = None
+            self.H0 = H_sys
+        elif isinstance(H_sys, (types.FunctionType,
+                            types.BuiltinFunctionType, partial)):
+            self.H_sys = H_sys
+            self.td_type = 'f'
+            self.H0 = self.H_sys(0.0, args)
+
+        if not isinstance(self.H0, Qobj):
+            raise TypeError("Invalid type {} for H_sys. Must be {} or callback "
+                            "function".format(type(H_sys), Qobj))
+        if not self.H0.isoper:
+            raise TypeError("H_sys must be (or return) a vaild Hamiltonian")
+
+        self.args = args
         self.coup_op = coup_op
         self.coup_strength = coup_strength
         self.temperature = temperature
@@ -201,6 +227,8 @@ class HEOMSolver(object):
             self.stats = self.create_new_stats()
         elif stats == False:
             self.stats = None
+
+
 
     def create_new_stats(self):
         """
@@ -239,7 +267,7 @@ class HSolverDL(HEOMSolver):
 
     def __init__(self, H_sys, coup_op, coup_strength, temperature,
                      N_cut, N_exp, cut_freq, planck=1.0, boltzmann=1.0,
-                     renorm=True, bnd_cut_approx=True,
+                     args=None, renorm=True, bnd_cut_approx=True,
                      options=None, progress_bar=None, stats=None):
 
         self.reset()
@@ -257,7 +285,8 @@ class HSolverDL(HEOMSolver):
 
         # the other attributes will be set in the configure method
         self.configure(H_sys, coup_op, coup_strength, temperature,
-                     N_cut, N_exp, cut_freq, planck=planck, boltzmann=boltzmann,
+                     N_cut, N_exp, cut_freq, args=args,
+                     planck=planck, boltzmann=boltzmann,
                      renorm=renorm, bnd_cut_approx=bnd_cut_approx, stats=stats)
 
     def reset(self):
@@ -270,7 +299,8 @@ class HSolverDL(HEOMSolver):
         self.bnd_cut_approx = False
 
     def configure(self, H_sys, coup_op, coup_strength, temperature,
-                     N_cut, N_exp, cut_freq, planck=None, boltzmann=None,
+                     N_cut, N_exp, cut_freq, args=None,
+                     planck=None, boltzmann=None,
                      renorm=None, bnd_cut_approx=None,
                      options=None, progress_bar=None, stats=None):
         """
@@ -280,7 +310,7 @@ class HSolverDL(HEOMSolver):
         start_config = timeit.default_timer()
 
         HEOMSolver.configure(self, H_sys, coup_op, coup_strength,
-                    temperature, N_cut, N_exp,
+                    temperature, N_cut, N_exp, args=args,
                     planck=planck, boltzmann=boltzmann,
                     options=options, progress_bar=progress_bar, stats=stats)
         self.cut_freq = cut_freq
@@ -307,8 +337,8 @@ class HSolverDL(HEOMSolver):
             if stats:
                 stats.add_message('options', 'renormalisation', ss_conf)
         # Dimensions et by system
-        sup_dim = H_sys.dims[0][0]**2
-        unit_sys = qeye(H_sys.dims[0])
+        sup_dim = self.H0.dims[0][0]**2
+        unit_sys = qeye(self.H0.dims[0])
 
         # Use shorthands (mainly as in referenced PRL)
         lam0 = self.coup_strength
@@ -404,7 +434,7 @@ class HSolverDL(HEOMSolver):
                     he_state_neigh[k] = n_k
 
         self._sysless_helems = L_helems.copy()
-        
+
         if stats:
             stats.add_timing('hierarchy contruct',
                              timeit.default_timer() - start_helem_constr,
@@ -413,14 +443,14 @@ class HSolverDL(HEOMSolver):
             stats.add_count('Num he interactions', N_he_interact, ss_conf)
 
         # Setup Liouvillian
-        if stats: 
+        if stats:
             start_louvillian = timeit.default_timer()
-       
-        L_helems = self._add_sys_liouvillian_helems(H_sys, L_helems)
-        
+
+        L_helems = self._add_sys_liouvillian_helems(self.H0, L_helems)
+
         if stats:
             stats.add_count('L nnz', L_helems.nnz, ss_conf)
-            stats.add_count('L max matrix elem', 
+            stats.add_count('L max matrix elem',
                             max(abs(np.asarray(L_helems.data.data))), ss_conf)
 
         if stats:
@@ -453,15 +483,15 @@ class HSolverDL(HEOMSolver):
         self._sup_dim = sup_dim
         self._configured = True
 
-    def _add_sys_liouvillian_helems(self, H_sys, L_helems=None):
+    def _add_sys_liouvillian_helems(self, H, L_helems=None):
         if L_helems is None:
             L_helems = self._sysless_helems
-            
-        H_he = zcsr_kron(self._unit_helems, liouvillian(H_sys).data)
+
+        H_he = zcsr_kron(self._unit_helems, liouvillian(H).data)
         return L_helems + H_he
-        
-        
-    def run(self, rho0, tlist, Hsys=None):
+
+
+    def run(self, rho0, tlist):
         """
         Function to solve for an open quantum system using the
         HEOM model.
@@ -473,9 +503,9 @@ class HSolverDL(HEOMSolver):
 
         tlist : list
             Time over which system evolves.
-            
+
         Hlist : Qobj or list of Qobj
-            Optional system Hamiltonian 
+            Optional system Hamiltonian
             or list of system  Hamiltonians for each timeslot
             i.e. Hsys piecewise constant in the evolution
 
@@ -490,16 +520,6 @@ class HSolverDL(HEOMSolver):
         sup_dim = self._sup_dim
         stats = self.stats
         r = self._ode
-        
-        if Hsys is None:
-            Hsys_list = None
-        else:
-            if isinstance(Hsys, Qobj):
-                Hsys_list = [Hsys]
-            elif hasattr(Hsys, '__iter__'):
-                Hsys_list = Hsys
-            else:
-                raise TypeError("Hsys must be Qobj or list of Qobj")
 
         if not self._configured:
             raise RuntimeError("Solver must be configured before it is run")
@@ -511,7 +531,6 @@ class HSolverDL(HEOMSolver):
             if ss_run is None:
                 ss_run = stats.add_section('run')
 
-        # Set up terms of the matsubara and tanimura boundaries
         output = Result()
         output.solver = "hsolve"
         output.times = tlist
@@ -532,14 +551,13 @@ class HSolverDL(HEOMSolver):
         dt = np.diff(tlist)
         n_tsteps = len(tlist)
         for t_idx, t in enumerate(tlist):
-            if Hsys_list:
-                # Update the system hamiltonian if there is a new one
-                # for this timeslot
-                if len(Hsys_list) > t_idx:
-                    L_helems = self._add_sys_liouvillian_helems(
-                                                            Hsys_list[t_idx])
-                    r.set_f_params(L_helems.data, L_helems.indices, 
-                                                           L_helems.indptr)
+            if self.td_type is not None:
+                # Update the HEOM based on H(t)
+                # NOTE: assumes constant in this timeslice
+                L_helems = self._add_sys_liouvillian_helems(
+                                                        self.H_sys(t, self.args))
+                r.set_f_params(L_helems.data, L_helems.indices,
+                                                       L_helems.indptr)
             if t_idx < n_tsteps - 1:
                 r.integrate(r.t + dt[t_idx])
                 rho = Qobj(r.y[:sup_dim].reshape(rho0.shape), dims=rho0.dims)
