@@ -435,6 +435,5 @@ class ControlSolverPWC(ControlSolver):
 
         #FIXME: For now we will assume that this is the HEOM solver
         solres = self.evo_solver.run(self.initial, self.tlist, self._dyn_gen)
-        print("Final state:\{}".format(solres.states[-1]))
         self.cost = self.cost_meter.compute_cost(solres.states[-1], self.target)
         return self.cost

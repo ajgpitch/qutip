@@ -357,7 +357,7 @@ class Optimizer(object):
                 logger.debug("cost error call {}".format(
                     self.stats.num_cost_calls))
 
-        print(args[0])
+        #print(args[0])
 
         changed_param_mask = self._compare_optim_params(args[0])
         if np.any(changed_param_mask):
