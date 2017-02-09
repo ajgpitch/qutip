@@ -46,6 +46,7 @@ import numpy as np
 # QuTiP
 from qutip import Qobj
 # QuTiP logging
+import qutip.settings as qset
 import qutip.logging_utils as logging
 logger = logging.get_logger()
 # QuTiP Control
@@ -83,12 +84,9 @@ class ControlSolver(object):
             raise TypeError("Invalid type {} for 'cost_meter'. Must be of type "
                             "{}".format(type(cost_meter), qoccost.CostMeter))
         self.cost_meter = cost_meter
-        self._check_initial(initial)
-        self.initial = initial
-        self._check_target(target)
-        self.target = target
-        self._check_ctrls(ctrl_dyn_gen)
-        self.ctrl_dyn_gen = ctrl_dyn_gen
+        self.initial = self._check_initial(initial)
+        self.target = self._check_target(target)
+        self.ctrl_dyn_gen = self._check_ctrls(ctrl_dyn_gen)
 
     def reset(self):
         self.evo_solver = None
@@ -181,6 +179,7 @@ class ControlSolver(object):
             raise TypeError("Invalid type {} for {} 'initial'. "
                             "Must be of type {}.".format(type(initial),
                                                         desc, Qobj))
+        return initial
 
     def _check_target(self, target=None):
         # In separate function, as may be overridden
@@ -198,6 +197,7 @@ class ControlSolver(object):
         if target.dims != self.initial.dims:
             raise TypeError("Incompatible quantum object dimensions "
                             "for 'initial' and 'target'")
+        return target
 
     def _check_drift(self, drift_dyn_gen=None):
         # In separate function, as may be overridden
@@ -221,6 +221,7 @@ class ControlSolver(object):
 #        if self.drift_dyn_gen.dims[1] != self.initial.dims[0]:
 #                        raise TypeError("Incompatible quantum object dimensions "
 #                                        "for 'drift_dyn_gen' and 'initial'")
+        return drift_dyn_gen
 
     def _check_ctrls(self, ctrl_dyn_gen=None):
         # In separate function, as may be overridden
@@ -243,6 +244,7 @@ class ControlSolver(object):
                         raise TypeError("Incompatible quantum object dimensions "
                                         "for 'ctrl_dyn_gen[{}]' and "
                                         "'drift_dyn_gen'".format(j))
+        return ctrl_dyn_gen
 
     def init_solve(self):
         """
@@ -267,68 +269,157 @@ class ControlSolver(object):
 class ControlSolverPWC(ControlSolver):
 
     def __init__(self, evo_solver, cost_meter, initial, target, ctrl_dyn_gen,
-                 tlist, initial_amps=None):
+                 tslot_duration, tlist=None, initial_amps=None):
         self.reset()
         ControlSolver.__init__(self, evo_solver, cost_meter, initial, target,
                                ctrl_dyn_gen)
-        self._check_tlist(tlist)
-        self.tlist = tlist
+        self.tslot_duration = self._check_tslot_duration(tslot_duration)
+        self.tlist = self._check_tlist(tlist)
         #TODO: Check ctrl amps
-        self.ctrl_amps = initial_amps
+        self.ctrl_amps = self._check_ctrl_amps(initial_amps)
 
     def reset(self):
         ControlSolver.reset(self)
+        #TODO: Switch to property setters?
+        self.tslot_duration = None
         self.tlist = None
         self.ctrl_amps = None
         self.cost_meter = None
         self._num_tslots = 0
         self._total_time = 0.0
+        self._tslot_time = None
         self._changed_amp_mask = None
 
 
     @property
     def num_tslots(self):
-        """Number of timeslots"""
+        """Number of tslot_duration"""
         return self._get_num_tslots()
 
+    def _check_tslot_duration(self, tslot_duration=None):
+        desc = 'parameter'
+        if tslot_duration is None:
+            tslot_duration = self.tslot_duration
+            desc = 'attribute'
+
+        try:
+            tslot_duration = np.array(tslot_duration)
+        except Exception as e:
+            raise TypeError("Invalid type {} for {} 'tslot_duration'. "
+                            "Must be array_like. Attempt at array raised: "
+                            "{}".format(type(tslot_duration), desc, e))
+
+        if len(tslot_duration.shape) != 0:
+            raise ValueError("Invalid shape {} for {} 'tslot_duration'. "
+                            "Must be 1 dim.".format(type(tslot_duration.shape),
+                                                    desc))
+
+        if self._get_num_tslots(tslot_duration) == 0:
+            raise ValueError("Invalid  {} 'tslot_duration'. Must define at "
+                            "least one timeslot.".format(
+                                                    type(tslot_duration), desc))
+
+        if self._get_total_time(tslot_duration) == 0.0:
+            raise TypeError("total time cannot be zero")
+
+        self._tslot_time = np.array([0.0] + np.cumsum(tslot_duration))
+
+        return tslot_duration
+
+    @property
+    def tslot_time(self):
+        return self._tslot_time
+
+
     def _check_tlist(self, tlist=None):
-        # In separate function, as may be overridden
-        # Assumes that _check_drift has already been called
+        # Assumes that _check_tslot_duration has already been called
         desc = 'parameter'
         if tlist is None:
             tlist = self.tlist
             desc = 'attribute'
 
-        if not hasattr(tlist, '__iter__'):
-            raise TypeError("Invalid type {} for {} 'tlist'. "
-                            "Must be iterable.".format(type(tlist), desc))
-
-        if self._get_num_tslots(tlist) == 0:
-            raise ValueError("Invalid value {} for {} 'tlist'. Must define "
-                            "at least one timeslot.".format(type(tlist), desc))
-
-        if self._get_total_time(tlist) == 0.0:
-            raise TypeError("total time cannot be zero")
-
-    def _get_num_tslots(self, tlist=None):
         if tlist is None:
-            tlist = self.tlist
+            return [0.0] + np.cumsum(self.tslot_duration).tolist()
 
         try:
-            self._num_tslots = len(tlist) - 1
+            tlist = list(tlist)
+        except Exception as e:
+            raise TypeError("Invalid type {} for {} 'tlist'. "
+                            "Must be iterable. Attempt at list(tlist) raised: "
+                            "{}".format(type(tlist), desc, e))
+
+        try:
+            tlist = [float(t) for t in tlist]
+        except:
+            raise TypeError("Invalid type in {} 'tlist'. "
+                            "Attempt at float cast raised: "
+                            "{}".format(desc, e))
+
+        end_time = tlist[-1]
+        if abs(end_time - self._get_total_time()) > qset.atol:
+            raise ValueError("Invalid end time {} for {} 'tlist'. "
+                            "Must be equal to the timeslot total time "
+                            "{}".format(end_time, desc, self._get_total_time()))
+
+        # The number of timeslots in the tlist must be a multiple of the
+        # number of timeslots for the controls
+        nts = len(tlist) - 1
+        if nts % self._num_tslots != 0:
+            nts = (nts//self._num_tslots + 1)*self._num_tslots
+            tlist = np.linspace(0.0, end_time, nts+1)
+
+        return tlist
+
+    def _get_num_tslots(self, tslot_duration=None):
+        if tslot_duration is None:
+            tslot_duration = self.tslot_duration
+
+        try:
+            self._num_tslots = len(tslot_duration)
         except:
             self._num_tslots = 0
         return self._num_tslots
+
+    def _check_ctrl_amps(self, ctrl_amps=None):
+        # In separate function, as may be overridden
+        # Assumes that _check_tslot_duration has already been called
+        desc = 'parameter'
+        if ctrl_amps is None:
+            ctrl_amps = self.ctrl_amps
+            desc = 'attribute'
+
+        try:
+            ctrl_amps = np.array(ctrl_amps)
+        except Exception as e:
+            raise TypeError("Invalid type {} for {} 'ctrl_amps'. "
+                            "Must be array_like. Attempt at array raised: "
+                            "{}".format(type(ctrl_amps), desc, e))
+
+        if (len(ctrl_amps.shape) != 2 or
+            ctrl_amps.shape[0] != self.num_tslots or
+            ctrl_amps.shape[1] != self.num_ctrls):
+            try:
+                ctrl_amps = ctrl_amps.reshape([self._num_tslots,
+                                               self._num_ctrls])
+            except Exception as e:
+                raise ValueError("Incorrect shape {} for {} 'ctrl_amps'. "
+                                "Must be of shape, or reshapeable to, "
+                                "(num_tslots, num_ctrls)="
+                                "({}, {})".format(ctrl_amps.shape, desc,
+                                                  self._num_tslots,
+                                                  self._num_ctrls))
+
+        return ctrl_amps
 
     @property
     def total_time(self):
         return self._get_total_time()
 
-    def _get_total_time(self, tlist=None):
-        if tlist is None:
-            tlist = self.tlist
+    def _get_total_time(self, tslot_duration=None):
+        if tslot_duration is None:
+            tslot_duration = self.tslot_duration
         try:
-            self._total_time = tlist[-1]
+            self._total_time = np.sum(tslot_duration)
         except:
             self._total_time = 0.0
         return self._total_time
@@ -363,32 +454,8 @@ class ControlSolverPWC(ControlSolver):
         #TODO: Add skip checks
 
         ControlSolver.init_solve(self)
-        self._check_tlist()
-
-        if ctrl_amps is None:
-            ctrl_amps = self.ctrl_amps
-
-        try:
-            ctrl_amps = np.array(ctrl_amps)
-        except Exception as e:
-            raise TypeError("Unable to set ctrl amplitude values: "
-                            "{}".format(e))
-
-        if (len(ctrl_amps.shape) != 2 or
-            ctrl_amps.shape[0] != self.num_tslots or
-            ctrl_amps.shape[1] != self.num_ctrls):
-            try:
-                ctrl_amps = ctrl_amps.reshape([self._num_tslots,
-                                               self._num_ctrls])
-            except Exception as e:
-                raise ValueError("Incorrect shape {} for 'ctrl_amps'. "
-                                "Must be of shape, or reshapeable to, "
-                                "(num_tslots, num_ctrls)="
-                                "({}, {})".format(ctrl_amps.shape,
-                                                  self._num_tslots,
-                                                  self._num_ctrls))
-
-        self.ctrl_amps = ctrl_amps
+        self.tslot_duration = self._check_tslot_duration()
+        self.ctrl_amps = self._check_ctrl_amps(ctrl_amps)
         self._init_dyn_gen()
 
         self._solve_initialized = True
@@ -424,6 +491,13 @@ class ControlSolverPWC(ControlSolver):
         else:
             return True
 
+    def _get_td_dyn_gen(self, t, args):
+        """Time dependent Hamiltonian function for solver"""
+
+        # get time slot
+        k = np.where(self._tslot_time <= t)[-1]
+        return self._dyn_gen[k]
+
     def solve(self, skip_init=False):
         """
         Solve the evolution with the PWC dynamics generators
@@ -434,6 +508,8 @@ class ControlSolverPWC(ControlSolver):
         self._update_dyn_gen()
 
         #FIXME: For now we will assume that this is the HEOM solver
-        solres = self.evo_solver.run(self.initial, self.tlist, self._dyn_gen)
+        self.evo_solver.H_sys = self._get_td_dyn_gen
+        self.evo_solver.td_type = 'f'
+        solres = self.evo_solver.run(self.initial, self.tlist)
         self.cost = self.cost_meter.compute_cost(solres.states[-1], self.target)
         return self.cost
