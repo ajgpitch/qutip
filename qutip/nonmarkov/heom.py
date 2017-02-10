@@ -551,14 +551,15 @@ class HSolverDL(HEOMSolver):
         dt = np.diff(tlist)
         n_tsteps = len(tlist)
         for t_idx, t in enumerate(tlist):
-            if self.td_type is not None:
-                # Update the HEOM based on H(t)
-                # NOTE: assumes constant in this timeslice
-                L_helems = self._add_sys_liouvillian_helems(
+            if t_idx < n_tsteps - 1:
+                if self.td_type is not None:
+                    # Update the HEOM based on H(t)
+                    # NOTE: assumes constant in this timeslice
+                    L_helems = self._add_sys_liouvillian_helems(
                                                         self.H_sys(t, self.args))
+
                 r.set_f_params(L_helems.data, L_helems.indices,
                                                        L_helems.indptr)
-            if t_idx < n_tsteps - 1:
                 r.integrate(r.t + dt[t_idx])
                 rho = Qobj(r.y[:sup_dim].reshape(rho0.shape), dims=rho0.dims)
                 output.states.append(rho)
