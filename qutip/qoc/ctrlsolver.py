@@ -101,6 +101,7 @@ class ControlSolver(object):
         self._num_ctrls = 0
 
     def clear(self):
+        self.evo_solver_result = None
         self.cost = None
 
     def apply_params(self, params=None):
@@ -309,9 +310,9 @@ class ControlSolverPWC(ControlSolver):
                             "Must be array_like. Attempt at array raised: "
                             "{}".format(type(tslot_duration), desc, e))
 
-        if len(tslot_duration.shape) != 0:
+        if len(tslot_duration.shape) != 1:
             raise ValueError("Invalid shape {} for {} 'tslot_duration'. "
-                            "Must be 1 dim.".format(type(tslot_duration.shape),
+                            "Must be 1 dim.".format(tslot_duration.shape,
                                                     desc))
 
         if self._get_num_tslots(tslot_duration) == 0:
@@ -322,7 +323,7 @@ class ControlSolverPWC(ControlSolver):
         if self._get_total_time(tslot_duration) == 0.0:
             raise TypeError("total time cannot be zero")
 
-        self._tslot_time = np.array([0.0] + np.cumsum(tslot_duration))
+        self._tslot_time = np.insert(np.cumsum(tslot_duration), 0, 0.0)
 
         return tslot_duration
 
@@ -339,21 +340,14 @@ class ControlSolverPWC(ControlSolver):
             desc = 'attribute'
 
         if tlist is None:
-            return [0.0] + np.cumsum(self.tslot_duration).tolist()
+            return np.insert(np.cumsum(self.tslot_duration), 0, 0.0)
 
         try:
-            tlist = list(tlist)
+            tlist = np.array(tlist, dtype='f')
         except Exception as e:
             raise TypeError("Invalid type {} for {} 'tlist'. "
-                            "Must be iterable. Attempt at list(tlist) raised: "
-                            "{}".format(type(tlist), desc, e))
-
-        try:
-            tlist = [float(t) for t in tlist]
-        except:
-            raise TypeError("Invalid type in {} 'tlist'. "
-                            "Attempt at float cast raised: "
-                            "{}".format(desc, e))
+                            "Must be array_like. Attempt at array(tlist) "
+                            "raised: {}".format(type(tlist), desc, e))
 
         end_time = tlist[-1]
         if abs(end_time - self._get_total_time()) > qset.atol:
@@ -495,7 +489,8 @@ class ControlSolverPWC(ControlSolver):
         """Time dependent Hamiltonian function for solver"""
 
         # get time slot
-        k = np.where(self._tslot_time <= t)[-1]
+        k = np.where(self._tslot_time <= t)[0][-1]
+        #print("time: {}".format(t))
         return self._dyn_gen[k]
 
     def solve(self, skip_init=False):
@@ -510,6 +505,7 @@ class ControlSolverPWC(ControlSolver):
         #FIXME: For now we will assume that this is the HEOM solver
         self.evo_solver.H_sys = self._get_td_dyn_gen
         self.evo_solver.td_type = 'f'
-        solres = self.evo_solver.run(self.initial, self.tlist)
-        self.cost = self.cost_meter.compute_cost(solres.states[-1], self.target)
+        self.evo_solver_result = self.evo_solver.run(self.initial, self.tlist)
+        self.cost = self.cost_meter.compute_cost(
+                                self.evo_solver_result.states[-1], self.target)
         return self.cost
