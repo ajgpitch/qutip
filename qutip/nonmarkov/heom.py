@@ -558,7 +558,7 @@ class HSolverDL(HEOMSolver):
                     L_helems = self._add_sys_liouvillian_helems(
                                                         self.H_sys(t, self.args))
 
-                r.set_f_params(L_helems.data, L_helems.indices,
+                    r.set_f_params(L_helems.data, L_helems.indices,
                                                        L_helems.indptr)
                 r.integrate(r.t + dt[t_idx])
                 rho = Qobj(r.y[:sup_dim].reshape(rho0.shape), dims=rho0.dims)
