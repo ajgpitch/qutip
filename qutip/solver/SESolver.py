@@ -29,21 +29,55 @@ class SESolver(object):
         self.args = {}
         self.options = None
         
+    def _check_initial(self, initial=None):
+        # In separate function, as may be overridden
+        desc = 'parameter'
+        if initial is None:
+            initial = self.initial
+            desc = 'attribute'
+
+        if not isinstance(initial, Qobj):
+            raise TypeError("Invalid type {} for {} 'initial'. "
+                            "Must be of type {}.".format(type(initial),
+                                                        desc, Qobj))
+        return initial
+        
     def _check_options(self, options=None):
+        desc = 'parameter'
         if options is None:
-            desc = 'parameter'
-        else:
+            if self.options is None:
+                return Options()
             options = self.options
+            desc = 'attribute'
+            
+        if not isinstance(options, Options):
+            raise TypeError("Invalid type {} for {} 'options'. "
+                            "Must be of type {}.".format(type(options),
+                                                        desc, Options))
+        return options
+
+    def _check_tlist(self, tlist=None):
+        # Assumes that _check_tslot_duration has already been called
+        desc = 'parameter'
+        if tlist is None:
+            tlist = self.tlist
+            desc = 'attribute'
+
+        try:
+            tlist = np.array(tlist, dtype='f')
+        except Exception as e:
+            raise TypeError("Invalid type {} for {} 'tlist'. "
+                            "Must be array_like. Attempt at array(tlist) "
+                            "raised: {}".format(type(tlist), desc, e))
+
+        return tlist
         
         
     def solve(self, initial, tlist, e_ops=[], options=None):
 
-        if options is not  
-        if options is None:
-            if isinstance(self.options, Options):
-                options = self.options
-            else:
-                options = Options()
+        options = self._check_options(options)
+        initial = self._check_initial(initial)
+        tlist = self._check_tlist(tlist)
             
         if not isket(psi0):
             raise TypeError("psi0 must be a ket")
