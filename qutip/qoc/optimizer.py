@@ -370,6 +370,8 @@ class Optimizer(object):
         if not self.ctrl_solver.is_solution_current:
             self.ctrl_solver.solve()
 
+        print("Cost {}".format(self.ctrl_solver.cost))
+
         if self.result.initial_cost is None:
             # Assume this is the first solve
             self.result.initial_cost = self.ctrl_solver.cost
@@ -381,7 +383,7 @@ class Optimizer(object):
         if self.num_cost_calls > self.max_cost_calls:
             raise terminator.MaxCostCallTerminate()
 
-        print("Cost {}".format(self.ctrl_solver.cost))
+
         return self.ctrl_solver.cost
 
 #    def fid_err_grad_wrapper(self, *args):
