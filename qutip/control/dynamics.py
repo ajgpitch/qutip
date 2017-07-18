@@ -135,14 +135,27 @@ def _check_ensemble_size(ne):
 #
 #    return ctrls
 
-def _check_nested_Qobj(chk, attr_name, max_nest=1, nest_level=0):
-    msg = "{} should be qobj or nested list of Qobj, up to {} nest levels"
-    if not isinstance(chk, Qobj):
-        if not isinstance(drift, (list, tuple)):
+def _check_nested_Qobj(chk, attr_name, min_nest=0, max_nest=1, nest_level=0):
+    if min_nest == 0:
+        msg = ("{} should be Qobj or nested list of Qobj, "
+               "up to {} nest levels".format(attr_name, max_nest))
+    else:
+        msg = ("{} should be nested list of Qobj, with min {} and max {} "
+               "nest levels".format(attr_name, min_nest, max_nest))
+
+    if isinstance(chk, Qobj):
+        if nest_level < min_nest:
             raise TypeError(msg)
+    else:
+        if isinstance(chk, (list, tuple)):
+            if nest_level > max_nest:
+                raise TypeError("{} is nested beyond the "
+                                "maximum {}".format(attr_name, max_nest))
+            for o in chk:
+                _check_nested_Qobj(o, attr_name, min_nest=min_nest,
+                                  max_nest=max_nest, nest_level=nest_level+1)
         else:
-            _check_nested_Qobj(chk, attr_name,
-                              max_nest=max_nest, nest_level=nest_level+1)
+            raise TypeError(msg)
 
 def _check_initial(initial):
     _check_nested_Qobj(initial, 'initial', 1)
@@ -155,6 +168,17 @@ def _check_drift(drift):
 
 def _check_ctrls(ctrls):
     _check_nested_Qobj(ctrls, 'ctrls', 3)
+
+def _create_nested_dense(ql):
+    """
+    created a nested list of ndarray from nested list of Qobj
+    """
+    if isinstance(ql, Qobj):
+        return ql.full()
+    elif isinstance(ql, (list, tuple)):
+        return [_create_nested_dense(q) for q in ql]
+    else:
+        raise TypeError("Unexpected type {}".format(type(ql)))
 
 warnings.simplefilter('always', DeprecationWarning) #turn off filter
 def _attrib_deprecation(message, stacklevel=3):
@@ -445,8 +469,8 @@ class Dynamics(object):
         self.dyn_shape = None
         self.sys_dims = None
         self.sys_shape = None
-        self.time_depend_drift = False
-        self.time_depend_ctrl_dyn_gen = False
+        self._time_depend_drift = [False]
+        self._time_depend_ctrl_dyn_gen = [False]
         # These internal attributes will be of the internal operator data type
         # used to compute the evolution
         # Note this maybe ndarray, Qobj or some other depending on oper_dtype
@@ -491,6 +515,7 @@ class Dynamics(object):
         # Internal flags
         self._dyn_gen_mapped = False
         self._timeslots_initialized = False
+        self._evo_initialized = False
         self._ctrls_initialized = False
         self._ctrls_type_checked = False
         self._drift_type_checked = False
@@ -769,7 +794,6 @@ class Dynamics(object):
         Set the time slices and cumulative time
         """
         # check evolution operators
-
         ne = _check_ensemble_size(self.ensemble_size)
         self.ensemble_size = ne
 
@@ -805,74 +829,93 @@ class Dynamics(object):
         self._ctrl_dyn_gen = []
 
         # check ensemble set up
-        if isinstance(self.initial, list, tuple) and len(self.initial) == ne:
-            self._e_shares_initial = False
+        if isinstance(self.initial, list, tuple):
+            if len(self.initial) == ne::
+                self._e_shares_initial = False
+            else:
+                raise ValueError("List len {} of initial evo does not match "
+                            "ensemble_size {}".format(len(self.initial), ne))
+        if isinstance(self.target, list):
+            if len(self.target) == ne:
+                self._e_shares_target = False
+            else:
+                raise ValueError("List len {} of target evo does not match "
+                            "ensemble_size {}".format(len(self.target), ne))
+        # These lists don't have to be the same size, as drift could be
+        # time dependent list
         if (isinstance(self.drift_dyn_gen, list, tuple)
                 and len(self.drift_dyn_gen)) == ne:
             self._e_shares_drift = False
-        if (and isinstance(self.ctrl_dyn_gen[0], list, tuple)
-                and len(self.ctrl_dyn_gen)) == ne:
+
+        # self.ctrl_dyn_gen will always be a list
+        # there could confusion here if n_ctrls==ne and there are
+        # time dependent controls
+        if (isinstance(self.ctrl_dyn_gen[0], list, tuple)
+                and len(self.ctrl_dyn_gen) == ne):
             self._e_shares_ctrls = False
-        if isinstance(self.target, list) and len(self.target) == ne:
-            self._e_shares_target = False
 
-        # check
 
+        #TODO: Check matching evo and operator types
 
         # Set up the dynamics operators for a given ensembles
-
+        # Note there is some attempt here to avoid making copies of objects
         if self.oper_dtype == Qobj:
-            if self.ensemble_size == 1:
-                self._initial = [self.initial]
-            else:
-                if self._e_shares_initial:
-                    self._initial = [self.initial for e in range(ne)]
-                else:
-                    self._initial = self.initial
+            if self._e_shares_initial:
+                self._initial = [self.initial for e in range(ne)]
+            elif:
+                self._initial = self.initial
 
-            self._target[e] = self.target
-            self._drift_dyn_gen[e] = self.drift_dyn_gen
-            self._ctrl_dyn_gen[e] = self.ctrl_dyn_gen
+            if self._e_shares_target:
+                self._target = [self.target for e in range(ne)]
+            else:
+                self._target = self.target
+
+            if self._e_shares_drift:
+                self._drift_dyn_gen = [self.drift_dyn_gen for e in range(ne)]
+            else:
+                self._drift_dyn_gen = self.drift_dyn_gen
+
+            if self._e_shares_ctrls:
+                self._ctrl_dyn_gen = [self.ctrl_dyn_gen for e in range(ne)]
+            else:
+                self._ctrl_dyn_gen = self.ctrl_dyn_gen
+
         elif self.oper_dtype == np.ndarray:
-            self._initial = self.initial.full()
-            self._target = self.target.full()
-            if self.time_depend_drift:
-                self._drift_dyn_gen = [d.full()
-                                        for d in self.drift_dyn_gen]
+            if self._e_shares_initial:
+                dense = self.initial.full()
+                self._initial = [dense for e in range(ne)]
             else:
-                self._drift_dyn_gen = self.drift_dyn_gen.full()
-            if self.time_depend_ctrl_dyn_gen:
-                self._ctrl_dyn_gen = np.empty([n_ts, n_ctrls],
-                                              dtype=object)
-                for k in range(n_ts):
-                    for j in range(n_ctrls):
-                        self._ctrl_dyn_gen[k, j] = \
-                                    self.ctrl_dyn_gen[k, j].full()
-            else:
-                self._ctrl_dyn_gen = [ctrl.full()
-                                        for ctrl in self.ctrl_dyn_gen]
-        elif self.oper_dtype == sp.csr_matrix:
-            self._initial = self.initial.data
-            self._target = self.target.data
-            if self.time_depend_drift:
-                self._drift_dyn_gen = [d.data for d in self.drift_dyn_gen]
-            else:
-                self._drift_dyn_gen = self.drift_dyn_gen.data
+                self._initial = [evo.full() for evo in self.initial]
 
-            if self.time_depend_ctrl_dyn_gen:
-                self._ctrl_dyn_gen = np.empty([n_ts, n_ctrls],
-                                              dtype=object)
-                for k in range(n_ts):
-                    for j in range(n_ctrls):
-                        self._ctrl_dyn_gen[k, j] = \
-                                    self.ctrl_dyn_gen[k, j].data
+            if self._e_shares_target:
+                dense = self.target.full()
+                self._target = [dense for e in range(ne)]
             else:
-                self._ctrl_dyn_gen = [ctrl.data
-                                      for ctrl in self.ctrl_dyn_gen]
+                self._target = self.target
+
+            if self._e_shares_drift:
+                dense = _create_nested_dense(self.drift_dyn_gen)
+                self._drift_dyn_gen = [dense for e in range(ne)]
+            else:
+                self._drift_dyn_gen = _create_nested_dense(self.drift_dyn_gen)
+
+            if self._e_shares_ctrls:
+                dense = _create_nested_dense(self.ctrl_dyn_gen)
+                self._ctrl_dyn_gen = [dense for e in range(ne)]
+            else:
+                self._ctrl_dyn_gen = _create_nested_dense(self.drift_dyn_gen)
+
         else:
             logger.warn("Unknown option '{}' for oper_dtype. "
                 "Assuming that internal drift, ctrls, initial and target "
                 "have been set correctly".format(self.oper_dtype))
+
+        #TODO: check for td drift and controls
+        # For now just set td to false
+
+        self._time_depend_drift = [False for e in range(ne)]
+        self._time_depend_ctrl_dyn_gen = [False for e in range(ne)]
+
 
         if self.cache_phased_dyn_gen and not self.dyn_gen_phase is None:
             if self.time_depend_ctrl_dyn_gen:
@@ -919,6 +962,8 @@ class Dynamics(object):
             logger.info("Dynamics dump will be written to:\n{}".format(
                             self.dump.dump_dir))
 
+        self._evo_initialized = True
+
     def _create_decomp_lists(self):
         """
         Create lists that will hold the eigen decomposition
@@ -933,12 +978,17 @@ class Dynamics(object):
             self._dyn_gen_eigenvectors_adj = [object for x in range(n_ts)]
         self._dyn_gen_factormatrix = [object for x in range(n_ts)]
 
-    def initialize_controls(self, amps, init_tslots=True):
+    def initialize_controls(self, amps, init_tslots=True, init_evo=True):
         """
         Set the initial control amplitudes and time slices
         Note this must be called after the configuration is complete
         before any dynamics can be calculated
         """
+
+        if not self._timeslots_initialized:
+            init_tslots = True
+        if not self._evo_initialized:
+            init_evo = True
         if not isinstance(self.prop_computer, propcomp.PropagatorComputer):
             raise errors.UsageError(
                 "No prop_computer (propagator computer) "
@@ -955,8 +1005,6 @@ class Dynamics(object):
                 " set. A default should be assigned by the Dynamics subclass")
 
         self.ctrl_amps = None
-        if not self._timeslots_initialized:
-            init_tslots = True
         if init_tslots:
             self.init_timeslots()
         self._init_evo()
@@ -1064,6 +1112,9 @@ class Dynamics(object):
         if self.dyn_shape is None:
             self.refresh_drift_attribs()
         return self.dyn_shape[0]
+
+    @property
+
 
     def refresh_drift_attribs(self):
         """Reset the dyn_shape, dyn_dims and time_depend_drift attribs"""
