@@ -254,7 +254,7 @@ class PropCompDiag(PropagatorComputer):
             prop = (dyn._dyn_gen_eigenvectors[e][k]*dyn._prop_eigen[e][k]*
                                 dyn._get_dyn_gen_eigenvectors_adj(e, k))
         else:
-            prop = (dyn._dyn_gen_eigenvectors[e][k]).dot(
+            prop = dyn._dyn_gen_eigenvectors[e][k].dot(
                                     dyn._prop_eigen[e][k]).dot(
                                 dyn._get_dyn_gen_eigenvectors_adj(e, k))
 

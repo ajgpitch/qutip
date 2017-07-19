@@ -828,6 +828,10 @@ class Dynamics(object):
         self._ctrl_dyn_gen = []
 
         # check ensemble set up
+        self._e_shares_initial = True
+        self._e_shares_drift = True
+        self._e_shares_ctrls = True
+        self._e_shares_target = True
         if isinstance(self.initial, (list, tuple)):
             if len(self.initial) == ne:
                 self._e_shares_initial = False
