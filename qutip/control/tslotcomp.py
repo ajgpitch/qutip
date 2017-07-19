@@ -346,7 +346,7 @@ class TSlotCompUpdateAll(TimeslotComputer):
                     if dyn.oper_dtype == Qobj:
                         dyn._onto_evo[e][k] = dyn._onto_evo[e][k+1]*dyn._prop[e][k]
                     else:
-                        dyn._onto_evo[e][k] = dyn._onto_evo[e][k+1].dot(dyn._prop[e][k])
+                        dyn._onto_evo[e][k] = (dyn._onto_evo[e][k+1]).dot(dyn._prop[e][k])
 
         if ecs:
             ecs.wall_time_onwd_prop_compute = \

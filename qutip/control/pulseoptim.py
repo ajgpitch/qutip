@@ -1653,14 +1653,10 @@ def create_pulse_optimizer(
     """
 
     # check parameters
-    ctrls = dynamics._check_ctrls_container(ctrls)
-    dynamics._check_drift_dyn_gen(drift)
-
-    if not isinstance(initial, Qobj):
-        raise TypeError("initial must be a Qobj")
-
-    if not isinstance(target, Qobj):
-        raise TypeError("target must be a Qobj")
+    dynamics._check_initial(initial)
+    dynamics._check_target(target)
+    dynamics._check_ctrls(ctrls)
+    dynamics._check_drift(drift)
 
     # Deprecated parameter management
     if not optim_alg is None:
@@ -1771,7 +1767,6 @@ def create_pulse_optimizer(
     dyn._target_type_checked = True
     dyn._drift_type_checked = True
     dyn._ctrls_type_checked = True
-
 
     # Create the PropagatorComputer instance
     # The default will be typically be the best option

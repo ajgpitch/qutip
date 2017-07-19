@@ -174,7 +174,7 @@ class FidelityComputer(object):
         """
         self.log_level = self.parent.log_level
         self.id_text = 'FID_COMP_BASE'
-        self.dimensional_norm = 1.0
+        self.dimensional_norm = None
         self.fid_norm_func = None
         self.grad_norm_func = None
         self.uses_onwd_evo = False
@@ -385,12 +385,16 @@ class FidCompUnitary(FidelityComputer):
         SU  - global phase respected
         """
         dyn = self.parent
+        ne = dyn.ensemble_size
+        self.dimensional_norm = [1.0 for e in range(ne)]
         for e in range(dyn.ensemble_size):
-            self.dimensional_norm[e] = 1.0
-            self.dimensional_norm[e] = \
-                self.fid_norm_func(dyn.target[e].dag()*dyn.target[e])
+            if isinstance(dyn.target, (tuple, list)):
+                targ = dyn.target[e]
+            else:
+                targ = dyn.target
+            self.dimensional_norm[e] = self.fid_norm_func(targ.dag()*targ, e)
 
-    def normalize_SU(self, A):
+    def normalize_SU(self, A, e):
         """
 
         """
@@ -404,18 +408,18 @@ class FidCompUnitary(FidelityComputer):
             # assume input is already scalar and hence assumed
             # to be the prenormalised scalar value, e.g. fidelity
             norm = A
-        return np.real(norm) / self.dimensional_norm
+        return np.real(norm) / self.dimensional_norm[e]
 
-    def normalize_gradient_SU(self, grad):
+    def normalize_gradient_SU(self, grad, e):
         """
         Normalise the gradient matrix passed as grad
         This SU version respects global phase
         """
-        grad_normalized = np.real(grad) / self.dimensional_norm
+        grad_normalized = np.real(grad) / self.dimensional_norm[e]
 
         return grad_normalized
 
-    def normalize_PSU(self, A):
+    def normalize_PSU(self, A, e):
         """
 
         """
@@ -429,7 +433,7 @@ class FidCompUnitary(FidelityComputer):
             # assume input is already scalar and hence assumed
             # to be the prenormalised scalar value, e.g. fidelity
             norm = A
-        return np.abs(norm) / self.dimensional_norm
+        return np.abs(norm) / self.dimensional_norm[e]
 
     def normalize_gradient_PSU(self, grad, e):
         """
@@ -438,7 +442,7 @@ class FidCompUnitary(FidelityComputer):
         """
         fid_pn = self.get_fidelity_prenorm()[e]
         grad_normalized = np.real(grad * np.exp(-1j * np.angle(fid_pn)) /
-                                  self.dimensional_norm)
+                                  self.dimensional_norm[e])
         return grad_normalized
 
     def get_fid_err(self):
@@ -457,8 +461,8 @@ class FidCompUnitary(FidelityComputer):
         if not self.fidelity_current:
             self.get_fidelity_prenorm()
             f = 0
-            for e in dyn.ensemble_size:
-                f += self.fid_norm_func(self.fidelity_prenorm[e])
+            for e in range(dyn.ensemble_size):
+                f += self.fid_norm_func(self.fidelity_prenorm[e], e)
 
             self.fidelity = f / dyn.ensemble_size
 
@@ -479,7 +483,7 @@ class FidCompUnitary(FidelityComputer):
             k = dyn.tslot_computer._get_timeslot_for_fidelity_calc()
             dyn.compute_evolution()
             self.fidelity_prenorm = []
-            for e in dyn.ensemble_size:
+            for e in range(dyn.ensemble_size):
                 if dyn.oper_dtype == Qobj:
                     f = (dyn._onto_evo[e][k]*dyn._fwd_evo[e][k]).tr()
                 else:

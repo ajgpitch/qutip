@@ -158,16 +158,16 @@ def _check_nested_Qobj(chk, attr_name, min_nest=0, max_nest=1, nest_level=0):
             raise TypeError(msg)
 
 def _check_initial(initial):
-    _check_nested_Qobj(initial, 'initial', 1)
+    _check_nested_Qobj(initial, 'initial', max_nest=1)
 
 def _check_target(target):
-    _check_nested_Qobj(target, 'target', 1)
+    _check_nested_Qobj(target, 'target', max_nest=1)
 
 def _check_drift(drift):
-    _check_nested_Qobj(drift, 'drift', 2)
+    _check_nested_Qobj(drift, 'drift', max_nest=2)
 
 def _check_ctrls(ctrls):
-    _check_nested_Qobj(ctrls, 'ctrls', 3)
+    _check_nested_Qobj(ctrls, 'ctrls', min_nest=1, max_nest=3)
 
 def _create_nested_dense(ql):
     """
@@ -761,12 +761,12 @@ class Dynamics(object):
             # if method is not explicitly given, try to make a good choice
             # between sparse and dense solvers by considering the size of the
             # system and the number of non-zero elements.
-            if self.time_depend_drift:
+            if isinstance(self.drift_dyn_gen, (list, tuple)):
                 dg = self.drift_dyn_gen[0]
             else:
                 dg = self.drift_dyn_gen
-            if self.time_depend_ctrl_dyn_gen:
-                ctrls = self.ctrl_dyn_gen[0, :]
+            if isinstance(self.ctrl_dyn_gen[0], (list, tuple)):
+                ctrls = self.ctrl_dyn_gen[0]
             else:
                 ctrls = self.ctrl_dyn_gen
             for c in ctrls:
@@ -797,16 +797,16 @@ class Dynamics(object):
         ne = _check_ensemble_size(self.ensemble_size)
         self.ensemble_size = ne
 
-        if not self._initial_checked:
+        if not self._initial_type_checked:
             _check_initial(self.initial)
             self._initial_type_checked = True
-        if not self._target_checked:
+        if not self._target_type_checked:
             _check_target(self.target)
             self._target_type_checked = True
-        if not self._drift_dyn_gen_checked:
+        if not self._drift_type_checked:
             _check_drift(self.drift_dyn_gen)
             self._drift_type_checked = True
-        if not self._ctrl_dyn_gen_checked:
+        if not self._ctrls_type_checked:
             _check_ctrls(self.ctrl_dyn_gen)
             self._ctrls_type_checked = True
 
@@ -818,8 +818,7 @@ class Dynamics(object):
 
         self.refresh_drift_attribs()
         self._set_memory_optimizations()
-        self.sys_dims = self.initial.dims
-        self.sys_shape = self.initial.shape
+
         n_ts = self.num_tslots
         n_ctrls = self.num_ctrls
 
@@ -829,7 +828,7 @@ class Dynamics(object):
         self._ctrl_dyn_gen = []
 
         # check ensemble set up
-        if isinstance(self.initial, list, tuple):
+        if isinstance(self.initial, (list, tuple)):
             if len(self.initial) == ne:
                 self._e_shares_initial = False
             else:
@@ -843,18 +842,24 @@ class Dynamics(object):
                             "ensemble_size {}".format(len(self.target), ne))
         # These lists don't have to be the same size, as drift could be
         # time dependent list
-        if (isinstance(self.drift_dyn_gen, list, tuple)
+        if (isinstance(self.drift_dyn_gen, (list, tuple))
                 and len(self.drift_dyn_gen)) == ne:
             self._e_shares_drift = False
 
         # self.ctrl_dyn_gen will always be a list
         # there could confusion here if n_ctrls==ne and there are
         # time dependent controls
-        if (isinstance(self.ctrl_dyn_gen[0], list, tuple)
+        if (isinstance(self.ctrl_dyn_gen[0], (list, tuple))
                 and len(self.ctrl_dyn_gen) == ne):
             self._e_shares_ctrls = False
 
 
+        if self._e_shares_initial:
+            self._sys_dims = [self.initial.dims for e in range(ne)]
+            self._sys_shape = [self.initial.shape for e in range(ne)]
+        else:
+            self._sys_dims = [self.initial[e].dims for e in range(ne)]
+            self._sys_shape = [self.initial[e].shape for e in range(ne)]
         #TODO: Check matching evo and operator types
 
         # Set up the dynamics operators for a given ensembles
@@ -931,8 +936,8 @@ class Dynamics(object):
         self._prop = [[object for k in range(n_ts)]
                       for e in range(ne)]
         if self.prop_computer.grad_exact and self.cache_prop_grad:
-            self._prop_grad = [[[object for k in range(n_ts)]
-                                for j in range(n_ctrls)]
+            self._prop_grad = [[[object for j in range(n_ctrls)]
+                                for k in range(n_ts)]
                                for e in range(ne)]
         # Time evolution operator (forward propagation)
         self._fwd_evo = [[object for k in range(n_ts+1)] for e in range(ne)]
@@ -945,6 +950,7 @@ class Dynamics(object):
             # Onward propagation overlap with inverse target
             self._onto_evo = [[object for k in range(n_ts+1)]
                               for e in range(ne)]
+            self._onto_evo_target = [object for e in range(ne)]
             for e in range(ne):
                 self._onto_evo[e][n_ts] = self._get_onto_evo_target(e)
 
@@ -1137,7 +1143,7 @@ class Dynamics(object):
         """
         if self._dyn_shape is None:
             self.refresh_drift_attribs()
-        return self._dyn_shape[e]
+        return self._dyn_shape[e][0]
 
     def refresh_drift_attribs(self):
         """Reset the dyn_shape, dyn_dims and time_depend_drift attribs"""
@@ -1155,8 +1161,8 @@ class Dynamics(object):
                                for e in range(self.ensemble_size)]
 
         #FIXME: This is a fudge for now
-        self.dyn_shape = d0.shape[0]
-        self.dyn_dims = d0.dims[0]
+#        self.dyn_shape = d0.shape[0]
+#        self.dyn_dims = d0.dims[0]
 
     def get_num_ctrls(self):
         """
@@ -1170,11 +1176,11 @@ class Dynamics(object):
 
     def _get_num_ctrls(self):
         #FIXME: Will not work with td ctrls
-        if not self._ctrl_dyn_gen_checked:
+        if not self._ctrls_type_checked:
             _check_ctrls(self.ctrl_dyn_gen)
-            self._ctrl_dyn_gen_checked = True
+            self._ctrls_type_checked = True
 
-        if isinstance(self.ctrl_dyn_gen[0], list, tuple):
+        if isinstance(self.ctrl_dyn_gen[0], (list, tuple)):
             self._num_ctrls = len(self.ctrl_dyn_gen[0])
         else:
             self._num_ctrls = len(self.ctrl_dyn_gen)
@@ -1202,7 +1208,7 @@ class Dynamics(object):
             if isinstance(self._onto_evo_target, Qobj):
                 self._onto_evo_target_qobj = self._onto_evo_target
             else:
-                rev_dims = [self.sys_dims[1], self.sys_dims[0]]
+                rev_dims = [self._sys_dims[1], self._sys_dims[0]]
                 self._onto_evo_target_qobj = Qobj(self._onto_evo_target,
                                                   dims=rev_dims)
 
@@ -1223,7 +1229,7 @@ class Dynamics(object):
         operator is is required
         For state-to-state, the bra corresponding to the is required ket
         """
-        self._onto_evo_target = [object for e in self.ensemble_size]
+        #self._onto_evo_target = [object for e in self.ensemble_size]
 
         if self.target.shape[0] == self.target.shape[1]:
             #Target is operator
@@ -1262,9 +1268,9 @@ class Dynamics(object):
         The is the combined Hamiltion for unitary systems
         Also applies the phase (if any required by the propagation)
         """
-        dg = self._drift_dyn_gen[e][k]
+        dg = self._drift_dyn_gen[e]
         for j in range(self._num_ctrls):
-            dg = dg + self.ctrl_amps[e][k, j]*self._ctrl_dyn_gen[e][j]
+            dg = dg + self.ctrl_amps[k, j]*self._ctrl_dyn_gen[e][j]
 
         self._dyn_gen[e][k] = dg
         if self.cache_phased_dyn_gen:
@@ -1395,16 +1401,20 @@ class Dynamics(object):
         List of evolution operators (Qobj) from the initial to the given
         timeslot
         """
-        raise NotImplementedError("ensemble")
+        #raise NotImplementedError("ensemble")
         if self._fwd_evo is not None:
             if self._fwd_evo_qobj is None:
                 if self.oper_dtype == Qobj:
                     self._fwd_evo_qobj = self._fwd_evo
                 else:
-                    self._fwd_evo_qobj = [self.initial]
-                    for k in range(1, self.num_tslots+1):
-                        self._fwd_evo_qobj.append(Qobj(self._fwd_evo[k],
-                                                       dims=self.sys_dims))
+                    self._fwd_evo_qobj = [[Qobj(self._fwd_evo[e][k],
+                                                       dims=self._sys_dims[e])
+                                           for k in range(self.num_tslots+1)]
+                                          for e in range(self.ensemble_size)]
+#                    self._fwd_evo_qobj = [self.initial]
+#                    for k in range(1, self.num_tslots+1):
+#                        self._fwd_evo_qobj.append(Qobj(self._fwd_evo[k],
+#                                                       dims=self._sys_dims))
         return self._fwd_evo_qobj
 
     def _get_full_evo(self):
@@ -1413,7 +1423,8 @@ class Dynamics(object):
     @property
     def full_evo(self):
         """Full evolution - time evolution at final time slot"""
-        return self.fwd_evo[self.num_tslots]
+        return [self.fwd_evo[e][self.num_tslots]
+                for e in range(self.ensemble_size)]
 
     @property
     def evo_t2end(self):
@@ -1433,7 +1444,7 @@ class Dynamics(object):
                 if self.oper_dtype == Qobj:
                     self._onwd_evo_qobj = self._fwd_evo
                 else:
-                    self._onwd_evo_qobj = [Qobj(dg, dims=self.sys_dims)
+                    self._onwd_evo_qobj = [Qobj(dg, dims=self._sys_dims)
                                             for dg in self._onwd_evo]
         return self._onwd_evo_qobj
 
@@ -1458,7 +1469,7 @@ class Dynamics(object):
                     self._onto_evo_qobj = []
                     for k in range(0, self.num_tslots):
                         self._onto_evo_qobj.append(Qobj(self._onto_evo[k],
-                                                       dims=self.sys_dims))
+                                                       dims=self._sys_dims))
                     self._onto_evo_qobj.append(self.onto_evo_target)
 
         return self._onto_evo_qobj
@@ -1482,7 +1493,7 @@ class Dynamics(object):
         else:
             return False
 
-    def _ensure_decomp_curr(self, k):
+    def _ensure_decomp_curr(self, e, k):
         """
         Checks to see if the diagonalisation has been completed since
         the last update of the dynamics generators
@@ -1491,10 +1502,10 @@ class Dynamics(object):
         """
         if self._decomp_curr is None:
             raise errors.UsageError("Decomp lists have not been created")
-        if not self._decomp_curr[k]:
-            self._spectral_decomp(k)
+        if not self._decomp_curr[e][k]:
+            self._spectral_decomp(e, k)
 
-    def _spectral_decomp(self, k):
+    def _spectral_decomp(self, e, k):
         """
         Calculate the diagonalization of the dynamics generator
         generating lists of eigenvectors, propagators in the diagonalised
@@ -1639,7 +1650,7 @@ class DynamicsUnitary(Dynamics):
             self._onto_evo_target[e] = self._target[e].dag()
         else:
             self._onto_evo_target[e] = self._target[e].T.conj()
-        return self._onto_evo_target
+        return self._onto_evo_target[e]
 
     def _spectral_decomp(self, e, k):
         """
