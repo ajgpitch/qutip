@@ -103,7 +103,7 @@ class TimeslotComputer(object):
         assuming everything runs as expected.
         The default NOTSET implies that the level will be taken from
         the QuTiP settings file, which by default is WARN
-        
+
     evo_comp_summary : EvoCompSummary
         A summary of the most recent evolution computation
         Used in the stats and dump
@@ -157,7 +157,7 @@ class TimeslotComputer(object):
         that is call logger.setLevel(lvl)
         """
         logger.setLevel(lvl)
-        
+
     def dump_current(self):
         """Store a copy of the current time evolution"""
         dyn = self.parent
@@ -165,21 +165,21 @@ class TimeslotComputer(object):
         if not isinstance(dump, qtrldump.DynamicsDump):
             raise RuntimeError("Cannot dump current evolution, "
                 "as dynamics.dump is not set")
-        
+
         anything_dumped = False
         item_idx = None
         if dump.dump_any:
             dump_item = dump.add_evo_dump()
             item_idx = dump_item.idx
             anything_dumped = True
-        
+
         if dump.dump_summary:
             dump.add_evo_comp_summary(dump_item_idx=item_idx)
             anything_dumped = True
-                
+
         if not anything_dumped:
             logger.warning("Dump set, but nothing dumped, check dump config")
-            
+
 
 class TSlotCompUpdateAll(TimeslotComputer):
     """
@@ -200,14 +200,14 @@ class TSlotCompUpdateAll(TimeslotComputer):
         """
         changed = False
         dyn = self.parent
-        
+
         if (dyn.stats or dyn.dump):
             if self.evo_comp_summary:
                 self.evo_comp_summary.reset()
             else:
                 self.evo_comp_summary = EvoCompSummary()
         ecs = self.evo_comp_summary
-        
+
         if dyn.ctrl_amps is None:
             # Flag fidelity and gradients as needing recalculation
             changed = True
@@ -224,7 +224,7 @@ class TSlotCompUpdateAll(TimeslotComputer):
                 if self.log_level <= logging.DEBUG:
                     logger.debug("{} amplitudes changed".format(
                         changed_amps.sum()))
-                
+
                 if ecs:
                     ecs.num_amps_changed = changed_amps.sum()
                     ecs.num_timeslots_changed = np.any(changed_amps, 1).sum()
@@ -238,7 +238,7 @@ class TSlotCompUpdateAll(TimeslotComputer):
             dyn.stats.num_ctrl_amp_updates += bool(ecs.num_amps_changed)
             dyn.stats.num_ctrl_amp_changes += ecs.num_amps_changed
             dyn.stats.num_timeslot_changes += ecs.num_timeslots_changed
-            
+
         if changed:
             dyn.ctrl_amps = new_amps
             dyn.flag_system_changed()
@@ -266,7 +266,7 @@ class TSlotCompUpdateAll(TimeslotComputer):
         dyn._fwd_evo_qobj = None
         dyn._onwd_evo_qobj = None
         dyn._onto_evo_qobj = None
-        
+
         if (dyn.stats or dyn.dump) and not self.evo_comp_summary:
             self.evo_comp_summary = EvoCompSummary()
         ecs = self.evo_comp_summary
@@ -280,34 +280,36 @@ class TSlotCompUpdateAll(TimeslotComputer):
 
         # calculate the Hamiltonians
         if ecs: time_start = timeit.default_timer()
-        for k in range(n_ts):
-            dyn._combine_dyn_gen(k)
-            if dyn._decomp_curr is not None:
-                dyn._decomp_curr[k] = False
-                
+        for e in range(dyn.ensemble_size):
+            for k in range(n_ts):
+                dyn._combine_dyn_gen(e, k)
+                if dyn._decomp_curr is not None:
+                    dyn._decomp_curr[e][k] = False
+
         if ecs:
             ecs.wall_time_dyn_gen_compute = \
                 timeit.default_timer() - time_start
 
         # calculate the propagators and the propagotor gradients
         if ecs: time_start = timeit.default_timer()
-        for k in range(n_ts):
-            if prop_comp.grad_exact and dyn.cache_prop_grad:
-                for j in range(n_ctrls):
-                    if j == 0:
-                        dyn._prop[k], dyn._prop_grad[k, j] = \
-                                    prop_comp._compute_prop_grad(k, j)
-                        if self.log_level <= logging.DEBUG_INTENSE:
-                            logger.log(logging.DEBUG_INTENSE,
-                                       "propagator {}:\n{:10.3g}".format(
-                                           k, self._prop[k]))
-                    else:
-                        dyn._prop_grad[k, j] = \
-                            prop_comp._compute_prop_grad(k, j, 
-                                                         compute_prop=False)
-            else:
-                dyn._prop[k] = prop_comp._compute_propagator(k)
-        
+        for e in range(dyn.ensemble_size):
+            for k in range(n_ts):
+                if prop_comp.grad_exact and dyn.cache_prop_grad:
+                    for j in range(n_ctrls):
+                        if j == 0:
+                            dyn._prop[e][k], dyn._prop_grad[e][k][j] = \
+                                        prop_comp._compute_prop_grad(e, k, j)
+                            if self.log_level <= logging.DEBUG_INTENSE:
+                                logger.log(logging.DEBUG_INTENSE,
+                                           "propagator {},{}:\n{:10.3g}".format(
+                                               e, k, self._prop[e][k]))
+                        else:
+                            dyn._prop_grad[e][k][j] = \
+                                prop_comp._compute_prop_grad(e, k, j,
+                                                             compute_prop=False)
+                else:
+                    dyn._prop[e][k] = prop_comp._compute_propagator(e, k)
+
         if ecs:
             ecs.wall_time_prop_compute = \
                 timeit.default_timer() - time_start
@@ -315,11 +317,12 @@ class TSlotCompUpdateAll(TimeslotComputer):
         if ecs: time_start = timeit.default_timer()
         # compute the forward propagation
         R = range(n_ts)
-        for k in R:
-            if dyn.oper_dtype == Qobj:
-                dyn._fwd_evo[k+1] = dyn._prop[k]*dyn._fwd_evo[k]
-            else:
-                dyn._fwd_evo[k+1] = dyn._prop[k].dot(dyn._fwd_evo[k])
+        for e in range(dyn.ensemble_size):
+            for k in R:
+                if dyn.oper_dtype == Qobj:
+                    dyn._fwd_evo[e][k+1] = dyn._prop[e][k]*dyn._fwd_evo[e][k]
+                else:
+                    dyn._fwd_evo[e][k+1] = dyn._prop[e][k].dot(dyn._fwd_evo[e][k])
 
         if ecs:
             ecs.wall_time_fwd_prop_compute = \
@@ -327,27 +330,28 @@ class TSlotCompUpdateAll(TimeslotComputer):
             time_start = timeit.default_timer()
         # compute the onward propagation
         if dyn.fid_computer.uses_onwd_evo:
-            dyn._onwd_evo[n_ts-1] = dyn._prop[n_ts-1]
-            R = range(n_ts-2, -1, -1)
-            for k in R:
-                if dyn.oper_dtype == Qobj:
-                    dyn._onwd_evo[k] = dyn._onwd_evo[k+1]*dyn._prop[k]
-                else:
-                    dyn._onwd_evo[k] = dyn._onwd_evo[k+1].dot(dyn._prop[k])
+            for e in range(dyn.ensemble_size):
+                dyn._onwd_evo[e][n_ts-1] = dyn._prop[e][n_ts-1]
+                R = range(n_ts-2, -1, -1)
+                for k in R:
+                    if dyn.oper_dtype == Qobj:
+                        dyn._onwd_evo[e][k] = dyn._onwd_evo[e][k+1]*dyn._prop[e][k]
+                    else:
+                        dyn._onwd_evo[e][k] = dyn._onwd_evo[e][k+1].dot(dyn._prop[e][k])
 
         if dyn.fid_computer.uses_onto_evo:
-            #R = range(n_ts-1, -1, -1)
-            R = range(n_ts-1, -1, -1)
-            for k in R:
-                if dyn.oper_dtype == Qobj:
-                    dyn._onto_evo[k] = dyn._onto_evo[k+1]*dyn._prop[k]
-                else:
-                    dyn._onto_evo[k] = dyn._onto_evo[k+1].dot(dyn._prop[k])
+            for e in range(dyn.ensemble_size):
+                R = range(n_ts-1, -1, -1)
+                for k in R:
+                    if dyn.oper_dtype == Qobj:
+                        dyn._onto_evo[e][k] = dyn._onto_evo[e][k+1]*dyn._prop[e][k]
+                    else:
+                        dyn._onto_evo[e][k] = dyn._onto_evo[e][k+1].dot(dyn._prop[e][k])
 
         if ecs:
             ecs.wall_time_onwd_prop_compute = \
                             timeit.default_timer() - time_start
-            
+
         if dyn.stats:
             dyn.stats.wall_time_dyn_gen_compute += \
                                     ecs.wall_time_dyn_gen_compute
@@ -357,10 +361,10 @@ class TSlotCompUpdateAll(TimeslotComputer):
                                     ecs.wall_time_fwd_prop_compute
             dyn.stats.wall_time_onwd_prop_compute += \
                                     ecs.wall_time_onwd_prop_compute
-                
+
         if dyn.unitarity_check_level:
             dyn.check_unitarity()
-            
+
         if dyn.dump:
             self.dump_current()
 
@@ -646,79 +650,79 @@ class EvoCompSummary(qtrldump.DumpSummaryItem):
     """
     A summary of the most recent time evolution computation
     Used in stats calculations and for data dumping
-    
+
     Attributes
     ----------
     evo_dump_idx : int
         Index of the linked :class:`dump.EvoCompDumpItem`
         None if no linked item
-        
+
     iter_num : int
         Iteration number of the pulse optimisation
         None if evolution compute outside of a pulse optimisation
-        
+
     fid_func_call_num : int
         Fidelity function call number of the pulse optimisation
         None if evolution compute outside of a pulse optimisation
-        
+
     grad_func_call_num : int
         Gradient function call number of the pulse optimisation
         None if evolution compute outside of a pulse optimisation
-        
+
     num_amps_changed : int
         Number of control timeslot amplitudes changed since previous
         evolution calculation
-        
+
     num_timeslots_changed : int
         Number of timeslots in which any amplitudes changed since previous
         evolution calculation
-        
+
     wall_time_dyn_gen_compute : float
         Time spent computing dynamics generators
         (in seconds of elapsed time)
-        
+
     wall_time_prop_compute : float
         Time spent computing propagators (including and propagator gradients)
         (in seconds of elapsed time)
-        
+
     wall_time_fwd_prop_compute : float
         Time spent computing the forward evolution of the system
-        see :property:`dynamics.fwd_evo`  
+        see :property:`dynamics.fwd_evo`
         (in seconds of elapsed time)
-        
+
     wall_time_onwd_prop_compute : float
         Time spent computing the 'backward' evolution of the system
         see :property:`dynamics.onwd_evo` and :property:`dynamics.onto_evo`
         (in seconds of elapsed time)
     """
-    
+
     min_col_width = 11
     summary_property_names = (
-        "idx", "evo_dump_idx", 
+        "idx", "evo_dump_idx",
         "iter_num", "fid_func_call_num", "grad_func_call_num",
         "num_amps_changed", "num_timeslots_changed",
         "wall_time_dyn_gen_compute", "wall_time_prop_compute",
         "wall_time_fwd_prop_compute", "wall_time_onwd_prop_compute")
-        
+
     summary_property_fmt_type = (
         'd', 'd',
         'd', 'd', 'd',
         'd', 'd',
-        'g', 'g', 
+        'g', 'g',
         'g', 'g'
         )
-        
+
     summary_property_fmt_prec = (
-        0, 0, 
+        0, 0,
         0, 0, 0,
-        0, 0, 
+        0, 0,
         3, 3,
         3, 3
         )
-        
+
     def __init__(self):
         self.reset()
-        
+
     def reset(self):
         qtrldump.DumpSummaryItem.reset(self)
         self.evo_dump_idx = None
@@ -731,4 +735,3 @@ class EvoCompSummary(qtrldump.DumpSummaryItem):
         self.wall_time_prop_compute = 0.0
         self.wall_time_fwd_prop_compute = 0.0
         self.wall_time_onwd_prop_compute = 0.0
-        

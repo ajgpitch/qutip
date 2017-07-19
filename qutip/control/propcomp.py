@@ -144,9 +144,9 @@ class PropagatorComputer(object):
     def compute_propagator(self, k):
         _func_deprecation("'compute_propagator' has been replaced "
                         "by '_compute_propagator'")
-        return self._compute_propagator(k)
-                               
-    def _compute_propagator(self, k):
+        return self._compute_propagator(e, k)
+
+    def _compute_propagator(self, e, k):
         """
         calculate the progator between X(k) and X(k+1)
         Uses matrix expm of the dyn_gen at that point (in time)
@@ -155,7 +155,7 @@ class PropagatorComputer(object):
         Return the propagator
         """
         dyn = self.parent
-        dgt = dyn._get_phased_dyn_gen(k)*dyn.tau[k]
+        dgt = dyn._get_phased_dyn_gen(e, k)*dyn.tau[k]
         if dyn.oper_dtype == Qobj:
             prop = dgt.expm()
         else:
@@ -165,7 +165,7 @@ class PropagatorComputer(object):
     def compute_diff_prop(self, k, j, epsilon):
         _func_deprecation("'compute_diff_prop' has been replaced "
                         "by '_compute_diff_prop'")
-        return self._compute_diff_prop( k, j, epsilon)
+        return self._compute_diff_prop(e, k, j, epsilon)
 
     def _compute_diff_prop(self, k, j, epsilon):
         """
@@ -180,9 +180,9 @@ class PropagatorComputer(object):
     def compute_prop_grad(self, k, j, compute_prop=True):
         _func_deprecation("'compute_prop_grad' has been replaced "
                         "by '_compute_prop_grad'")
-        return self._compute_prop_grad(self, k, j, compute_prop=compute_prop)
+        return self._compute_prop_grad(self, e, k, j, compute_prop=compute_prop)
 
-    def _compute_prop_grad(self, k, j, compute_prop=True):
+    def _compute_prop_grad(self, e, k, j, compute_prop=True):
         """
         Calculate the gradient of propagator wrt the control amplitude
         in the timeslot.
@@ -240,27 +240,27 @@ class PropCompDiag(PropagatorComputer):
         self.grad_exact = True
         self.apply_params()
 
-    def _compute_propagator(self, k):
+    def _compute_propagator(self, e, k):
         """
         Calculates the exponentiation of the dynamics generator (H)
         As part of the calc the the eigen decomposition is required, which
         is reused in the propagator gradient calculation
         """
         dyn = self.parent
-        dyn._ensure_decomp_curr(k)
+        dyn._ensure_decomp_curr(e, k)
 
         if dyn.oper_dtype == Qobj:
 
-            prop = (dyn._dyn_gen_eigenvectors[k]*dyn._prop_eigen[k]*
-                                dyn._get_dyn_gen_eigenvectors_adj(k))
+            prop = (dyn._dyn_gen_eigenvectors[e][k]*dyn._prop_eigen[e][k]*
+                                dyn._get_dyn_gen_eigenvectors_adj(e, k))
         else:
-            prop = dyn._dyn_gen_eigenvectors[k].dot(
-                                    dyn._prop_eigen[k]).dot(
+            prop = dyn._dyn_gen_eigenvectors[e][k].dot(
+                                    dyn._prop_eigen[e][k]).dot(
                                 dyn._get_dyn_gen_eigenvectors_adj(k))
 
         return prop
 
-    def _compute_prop_grad(self, k, j, compute_prop=True):
+    def _compute_prop_grad(self, e, k, j, compute_prop=True):
         """
         Calculate the gradient of propagator wrt the control amplitude
         in the timeslot.
@@ -269,32 +269,32 @@ class PropCompDiag(PropagatorComputer):
             [prop], prop_grad
         """
         dyn = self.parent
-        dyn._ensure_decomp_curr(k)
+        dyn._ensure_decomp_curr(e, k)
 
         if compute_prop:
-            prop = self._compute_propagator(k)
+            prop = self._compute_propagator(e, k)
 
         if dyn.oper_dtype == Qobj:
             # put control dyn_gen in combined dg diagonal basis
-            cdg =  (dyn._get_dyn_gen_eigenvectors_adj(k)*
-                        dyn._get_phased_ctrl_dyn_gen(k, j)*
-                        dyn._dyn_gen_eigenvectors[k])
+            cdg =  (dyn._get_dyn_gen_eigenvectors_adj(e, k)*
+                        dyn._get_phased_ctrl_dyn_gen(e, k, j)*
+                        dyn._dyn_gen_eigenvectors[e][k])
             # multiply (elementwise) by timeslice and factor matrix
             cdg = Qobj(np.multiply(cdg.full()*dyn.tau[k],
-                        dyn._dyn_gen_factormatrix[k]), dims=dyn.dyn_dims)
+                       dyn._dyn_gen_factormatrix[e][k]), dims=dyn._dyn_dims[e])
             # Return to canonical basis
-            prop_grad = (dyn._dyn_gen_eigenvectors[k]*cdg*
+            prop_grad = (dyn._dyn_gen_eigenvectors[e][k]*cdg*
                         dyn._get_dyn_gen_eigenvectors_adj(k))
         else:
             # put control dyn_gen in combined dg diagonal basis
-            cdg =  dyn._get_dyn_gen_eigenvectors_adj(k).dot(
-                        dyn._get_phased_ctrl_dyn_gen(k, j)).dot(
-                        dyn._dyn_gen_eigenvectors[k])
+            cdg =  dyn._get_dyn_gen_eigenvectors_adj(e, k).dot(
+                        dyn._get_phased_ctrl_dyn_gen(e, k, j)).dot(
+                        dyn._dyn_gen_eigenvectors[e][k])
             # multiply (elementwise) by timeslice and factor matrix
-            cdg = np.multiply(cdg*dyn.tau[k], dyn._dyn_gen_factormatrix[k])
+            cdg = np.multiply(cdg*dyn.tau[k], dyn._dyn_gen_factormatrix[e][k])
             # Return to canonical basis
-            prop_grad = dyn._dyn_gen_eigenvectors[k].dot(cdg).dot(
-                        dyn._get_dyn_gen_eigenvectors_adj(k))
+            prop_grad = dyn._dyn_gen_eigenvectors[e][k].dot(cdg).dot(
+                        dyn._get_dyn_gen_eigenvectors_adj(e, k))
 
         if compute_prop:
             return prop, prop_grad
