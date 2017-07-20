@@ -810,12 +810,6 @@ class Dynamics(object):
             _check_ctrls(self.ctrl_dyn_gen)
             self._ctrls_type_checked = True
 
-        if not isinstance(self.initial, Qobj):
-            raise TypeError("initial must be a Qobj")
-
-        if not isinstance(self.target, Qobj):
-            raise TypeError("target must be a Qobj")
-
         self.refresh_drift_attribs()
         self._set_memory_optimizations()
 
@@ -900,7 +894,7 @@ class Dynamics(object):
                 dense = self.target.full()
                 self._target = [dense for e in range(ne)]
             else:
-                self._target = self.target
+                self._target = [evo.full() for evo in self.target]
 
             if self._e_shares_drift:
                 dense = _create_nested_dense(self.drift_dyn_gen)
