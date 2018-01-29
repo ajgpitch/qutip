@@ -457,6 +457,8 @@ def coherence_function_g2(H, state0, taulist, c_ops, a_op, solver="me", args={},
         `me` or `mc`.
     a_op : Qobj
         operator A.
+    args : dict
+        Dictionary of arguments to be passed to solver.
     solver : str
         choice of solver (`me` for master-equation and
         `es` for exponential series).
@@ -478,7 +480,7 @@ def coherence_function_g2(H, state0, taulist, c_ops, a_op, solver="me", args={},
         state0 = steadystate(H, c_ops)
         n = np.array([expect(state0, a_op.dag() * a_op)])
     else:
-        n = mesolve(H, state0, taulist, c_ops, [a_op.dag() * a_op]).expect[0]
+        n = mesolve(H, state0, taulist, c_ops, [a_op.dag() * a_op], args=args).expect[0]
 
     # calculate the correlation function G2 and normalize with n to obtain g2
     G2 = correlation_3op_1t(H, state0, taulist, c_ops,
@@ -545,7 +547,7 @@ def spectrum(H, wlist, c_ops, a_op, b_op, solver="es", use_pinv=False):
                          "%s (use es or pi)." % solver)
 
 
-def spectrum_correlation_fft(taulist, y):
+def spectrum_correlation_fft(tlist, y):
     """
     Calculate the power spectrum corresponding to a two-time correlation
     function using FFT.
@@ -567,12 +569,13 @@ def spectrum_correlation_fft(taulist, y):
 
     if debug:
         print(inspect.stack()[0][3])
-
-    N = len(taulist)
-    dt = taulist[1] - taulist[0]
-
+    tlist = np.asarray(tlist)
+    N = tlist.shape[0]
+    dt = tlist[1] - tlist[0]
+    if not np.allclose(np.diff(tlist), dt*np.ones(N-1,dtype=float)):
+        raise Exception('tlist must be equally spaced for FFT.')
+    
     F = scipy.fftpack.fft(y)
-
     # calculate the frequencies for the components in F
     f = scipy.fftpack.fftfreq(N, dt)
 

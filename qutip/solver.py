@@ -323,14 +323,7 @@ class SolverConfiguration():
         # codegen has been run
         self.cflag = 0     # Flag signaling collapse operators
         self.tflag = 0     # Flag signaling time-dependent problem
-
-        # time-dependent (TD) function stuff
-        self.tdfunc = None     # Placeholder for TD RHS function.
-        self.tdname = None     # Name of td .pyx file
-        self.colspmv = None    # Placeholder for TD col-spmv function.
-        self.colexpect = None  # Placeholder for TD col_expect function.
-        self.string = None     # Holds string of variables passed to td solver
-
+        
         self.soft_reset()
 
     def soft_reset(self):
@@ -376,6 +369,14 @@ class SolverConfiguration():
         self.h_func_args = None
         self.c_funcs = None
         self.c_func_args = None
+        
+        # time-dependent (TD) function stuff
+        self.tdfunc = None     # Placeholder for TD RHS function.
+        self.tdname = None     # Name of td .pyx file
+        self.colspmv = None    # Placeholder for TD col-spmv function.
+        self.colexpect = None  # Placeholder for TD col_expect function.
+        self.string = None     # Holds string of variables passed to td solver
+        
 
 def _format_time(t, tt=None, ttt=None):
     time_str = str(datetime.timedelta(seconds=t))
@@ -788,7 +789,7 @@ class _StatsSection(object):
 
 
 
-def _solver_safety_check(H, state, c_ops=[], e_ops=[], args={}):
+def _solver_safety_check(H, state=None, c_ops=[], e_ops=[], args={}):
     # Input is std Qobj (Hamiltonian or Liouvillian)
     if isinstance(H, Qobj):
         Hdims = H.dims
@@ -807,6 +808,9 @@ def _solver_safety_check(H, state, c_ops=[], e_ops=[], args={}):
         elif isinstance(H[0], list):
             Hdims = H[0][0].dims
             Htype = H[0][0].type
+        elif isinstance(H[0], (FunctionType, BuiltinFunctionType)):
+            Hdims = H[0](0,args).dims
+            Htype = H[0](0,args).type 
         else:
             raise Exception('Invalid td-list element.')
         # Check all operators in list
@@ -817,23 +821,36 @@ def _solver_safety_check(H, state, c_ops=[], e_ops=[], args={}):
             elif isinstance(H[ii], list):
                 _temp_dims = H[ii][0].dims
                 _temp_type = H[ii][0].type
-            else:
+            elif isinstance(H[ii], (FunctionType, BuiltinFunctionType)):
+                _temp_dims = H[ii](0,args).dims
+                _temp_type = H[ii](0,args).type
+            else: 
                 raise Exception('Invalid td-list element.')
             _structure_check(_temp_dims,_temp_type,state)
     
     else:
         raise Exception('Invalid time-dependent format.')
     
+    
     for ii in range(len(c_ops)):
+        do_tests = True
         if isinstance(c_ops[ii], Qobj):
             _temp_state = c_ops[ii]
         elif isinstance(c_ops[ii], list):
-            _temp_state = c_ops[ii][0]
+            if isinstance(c_ops[ii][0], Qobj):
+                _temp_state = c_ops[ii][0]
+            elif isinstance(c_ops[ii][0], tuple):
+                do_tests = False
+                for kk in range(len(c_ops[ii][0])):
+                    _temp_state = c_ops[ii][0][kk]
+                    _structure_check(Hdims, Htype, _temp_state)
         else:
             raise Exception('Invalid td-list element.')
-        _structure_check(Hdims, Htype, _temp_state)
+        if do_tests:
+            _structure_check(Hdims, Htype, _temp_state)
     
-    for ii in range(len(e_ops)):
+    if isinstance(e_ops, list): 
+        for ii in range(len(e_ops)):
             if isinstance(e_ops[ii], Qobj):
                 _temp_state = e_ops[ii]
             elif isinstance(e_ops[ii], list):
@@ -841,32 +858,35 @@ def _solver_safety_check(H, state, c_ops=[], e_ops=[], args={}):
             else:
                 raise Exception('Invalid td-list element.')
             _structure_check(Hdims,Htype,_temp_state)
-
-
+    elif isinstance(e_ops, FunctionType):
+        pass
+    else:
+        raise Exception('Invalid e_ops specification.')
 
 def _structure_check(Hdims, Htype, state):
-    # Input state is a ket vector
-    if state.type == 'ket':
-        # Input is Hamiltonian
-        if Htype == 'oper':
-            if Hdims[1] != state.dims[0]:
-                raise Exception('Input operator and ket do not share same structure.')
-        # Input is super and state is ket
-        elif Htype == 'super':
-            if Hdims[1][1] != state.dims[0]:
-                raise Exception('Input operator and ket do not share same structure.')
-        else:
-            raise Exception('Invalid input operator.')
-    # Input state is a density matrix
-    elif state.type == 'oper':
-        # Input is Hamiltonian and state is density matrix
-        if Htype == 'oper':
-            if Hdims[1] != state.dims[0]:
-                raise Exception('Input operators do not share same structure.')
-        # Input is super op. and state is density matrix
-        elif Htype == 'super':
-            if Hdims[1] != state.dims:
-                raise Exception('Input operators do not share same structure.')
+    if state is not None:
+        # Input state is a ket vector
+        if state.type == 'ket':
+            # Input is Hamiltonian
+            if Htype == 'oper':
+                if Hdims[1] != state.dims[0]:
+                    raise Exception('Input operator and ket do not share same structure.')
+            # Input is super and state is ket
+            elif Htype == 'super':
+                if Hdims[1][1] != state.dims[0]:
+                    raise Exception('Input operator and ket do not share same structure.')
+            else:
+                raise Exception('Invalid input operator.')
+        # Input state is a density matrix
+        elif state.type == 'oper':
+            # Input is Hamiltonian and state is density matrix
+            if Htype == 'oper':
+                if Hdims[1] != state.dims[0]:
+                    raise Exception('Input operators do not share same structure.')
+            # Input is super op. and state is density matrix
+            elif Htype == 'super':
+                if Hdims[1] != state.dims:
+                    raise Exception('Input operators do not share same structure.')
 
  
 #

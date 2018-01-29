@@ -48,20 +48,23 @@ if sys.maxsize > 2**32: #Running 64-bit
     pardiso_delete_64 = qset.mkl_lib.pardiso_handle_delete_64
 
 
-def _pardiso_parameters(hermitian=False, has_perm=False):
+def _pardiso_parameters(hermitian, has_perm,
+                        max_iter_refine,
+                        scaling_vectors,
+                        weighted_matching):
     iparm = np.zeros(64, dtype=np.int32)
     iparm[0] = 1 # Do not use default values
     iparm[1] = 3 # Use openmp nested dissection
     if has_perm:
         iparm[4] = 1
-    iparm[7] = 10 # Max number of iterative refinements
+    iparm[7] = max_iter_refine # Max number of iterative refinements
     if hermitian:
         iparm[9] = 8
     else:
         iparm[9] = 13 
     if not hermitian:
-        iparm[10] = 1 # Scaling vectors
-        iparm[12] = 1 # Use non-symmetric weighted matching
+        iparm[10] = int(scaling_vectors) # Scaling vectors
+        iparm[12] = int(weighted_matching) # Use non-symmetric weighted matching
     iparm[17] = -1
     iparm[20] = 1
     iparm[23] = 1 # Parallel factorization
@@ -76,12 +79,15 @@ pardiso_error_msgs = {'-1': 'Input inconsistant', '-2': 'Out of memory', '-3': '
                 '-4' : 'Zero pivot, numerical factorization or iterative refinement problem', 
                 '-5': 'Unclassified internal error', '-6': 'Reordering failed',
                 '-7': 'Diagonal matrix is singular', '-8': '32-bit integer overflow', 
-                '-9': 'Not enough memeory for OOC', '-10': 'Error opening OOC files', 
+                '-9': 'Not enough memory for OOC', '-10': 'Error opening OOC files', 
                 '-11': 'Read/write error with OOC files', 
                 '-12': 'Pardiso-64 called from 32-bit library'}
                 
+
 def _default_solver_args():
-    def_args = {'hermitian': False, 'posdef': False, 'return_info': False}
+    def_args = {'hermitian': False, 'posdef': False, 'max_iter_refine': 10,
+    'scaling_vectors': True, 'weighted_matching': True,
+    'return_info': False}
     return def_args
 
 
@@ -154,16 +160,17 @@ class mkl_lu(object):
         np_x = x.ctypes.data_as(ctypeslib.ndpointer(data_type, ndim=1, flags='C')) 
         np_b = b.ctypes.data_as(ctypeslib.ndpointer(data_type, ndim=1, flags='C'))
         
-        error = 0
+        error = np.zeros(1,dtype=np.int32)
+        np_error = error.ctypes.data_as(ctypeslib.ndpointer(np.int32, ndim=1, flags='C')) 
         #Call solver
         _solve_start = time.time()
         pardiso(self._np_pt, byref(c_int(1)), byref(c_int(1)), byref(c_int(self._mtype)),
             byref(c_int(33)), byref(c_int(self._dim)), self._data, self._indptr, self._indices, 
             self._np_perm, byref(c_int(nrhs)), self._np_iparm, byref(c_int(0)), np_b,
-            np_x, byref(c_int(error)))
+            np_x, np_error)
         self._solve_time = time.time() -_solve_start
-        if error != 0:
-            raise Exception(pardiso_error_msgs[str(error)])
+        if error[0] != 0:
+            raise Exception(pardiso_error_msgs[str(error[0])])
         
         if verbose:
             print('Solution Stage')
@@ -193,12 +200,13 @@ class mkl_lu(object):
     
     def delete(self):
         #Delete all data
-        error = 0
+        error = np.zeros(1,dtype=np.int32)
+        np_error = error.ctypes.data_as(ctypeslib.ndpointer(np.int32, ndim=1, flags='C'))
         pardiso(self._np_pt, byref(c_int(1)), byref(c_int(1)), byref(c_int(self._mtype)),
             byref(c_int(-1)), byref(c_int(self._dim)), self._data, self._indptr, self._indices, 
             self._np_perm, byref(c_int(1)), self._np_iparm, byref(c_int(0)), byref(c_int(0)),
-            byref(c_int(0)), byref(c_int(error)))
-        if error == -10:
+            byref(c_int(0)), np_error)
+        if error[0] == -10:
             raise Exception('Error freeing solver memory')
         
         
@@ -271,7 +279,10 @@ def mkl_splu(A, perm=None, verbose=False, **kwargs):
     np_perm = perm.ctypes.data_as(ctypeslib.ndpointer(np.int32, ndim=1, flags='C'))
     
     # setup iparm 
-    iparm = _pardiso_parameters(solver_args['hermitian'], has_perm)
+    iparm = _pardiso_parameters(solver_args['hermitian'], has_perm,
+            solver_args['max_iter_refine'],
+            solver_args['scaling_vectors'], 
+            solver_args['weighted_matching'])
     np_iparm = iparm.ctypes.data_as(ctypeslib.ndpointer(np.int32, ndim=1, flags='C'))
     
     # setup call parameters
@@ -315,17 +326,19 @@ def mkl_splu(A, perm=None, verbose=False, **kwargs):
     np_b = b.ctypes.data_as(ctypeslib.ndpointer(data_type, ndim=1, flags='C'))
     x =  np.zeros(1, dtype=data_type) # Input dummy solution at this phase
     np_x = x.ctypes.data_as(ctypeslib.ndpointer(data_type, ndim=1, flags='C'))
-    error = 0 #Int containing error info
+    
+    error = np.zeros(1,dtype=np.int32)
+    np_error = error.ctypes.data_as(ctypeslib.ndpointer(np.int32, ndim=1, flags='C'))
     
     #Call solver
     _factor_start = time.time()
     pardiso(np_pt, byref(c_int(1)), byref(c_int(1)), byref(c_int(mtype)),
             byref(c_int(12)), byref(c_int(dim)), data, indptr, indices, np_perm,
             byref(c_int(1)), np_iparm, byref(c_int(0)), np_b,
-            np_x, byref(c_int(error)))
+            np_x, np_error)
     _factor_time = time.time() - _factor_start
-    if error != 0:
-        raise Exception(pardiso_error_msgs[str(error)])
+    if error[0] != 0:
+        raise Exception(pardiso_error_msgs[str(error[0])])
     
     if verbose:
         print('Analysis and Factorization Stage')

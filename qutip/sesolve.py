@@ -51,11 +51,12 @@ from qutip.interpolate import Cubic_Spline
 from qutip.settings import debug
 from qutip.cy.spmatfuncs import (cy_expect_psi, cy_ode_rhs,
                                  cy_ode_psi_func_td,
-                                 cy_ode_psi_func_td_with_state)
+                                 cy_ode_psi_func_td_with_state,
+                                 spmvpy_csr)
 from qutip.cy.codegen import Codegen
 from qutip.cy.utilities import _cython_build_cleanup
 
-from qutip.ui.progressbar import BaseProgressBar
+from qutip.ui.progressbar import (BaseProgressBar, TextProgressBar)
 from qutip.cy.openmp.utilities import check_use_openmp, openmp_components
 
 if qset.has_openmp:
@@ -66,7 +67,7 @@ if debug:
 
 
 def sesolve(H, rho0, tlist, e_ops=[], args={}, options=None,
-            progress_bar=BaseProgressBar(),
+            progress_bar=None,
             _safe_mode=True):
     """
     Schrodinger equation evolution of a state vector for a given Hamiltonian.
@@ -104,6 +105,10 @@ def sesolve(H, rho0, tlist, e_ops=[], args={}, options=None,
 
     options : :class:`qutip.Qdeoptions`
         with options for the ODE solver.
+            
+    progress_bar : BaseProgressBar
+        Optional instance of BaseProgressBar, or a subclass thereof, for
+        showing the progress of the simulation.
 
     Returns
     -------
@@ -129,6 +134,11 @@ def sesolve(H, rho0, tlist, e_ops=[], args={}, options=None,
     
     if _safe_mode:
         _solver_safety_check(H, rho0, c_ops=[], e_ops=e_ops, args=args)
+    
+    if progress_bar is None:
+        progress_bar = BaseProgressBar()
+    elif progress_bar is True:
+        progress_bar = TextProgressBar()
     
     # convert array based time-dependence to string format
     H, _, args = _td_wrap_array_str(H, [], args, tlist)
@@ -247,15 +257,20 @@ def psi_list_td(t, psi, H_list_and_args):
     H_list = H_list_and_args[0]
     args = H_list_and_args[1]
 
-    H = H_list[0][0] * H_list[0][1](t, args)
+    H = H_list[0][0]
+    H_td = H_list[0][1]
+    out = np.zeros(psi.shape[0],dtype=complex)
+    spmvpy_csr(H.data, H.indices, H.indptr, psi, H_td(t, args), out)
     for n in range(1, len(H_list)):
         #
         # args[n][0] = the sparse data for a Qobj in operator form
         # args[n][1] = function callback giving the coefficient
         #
-        H = H + H_list[n][0] * H_list[n][1](t, args)
+        H = H_list[n][0]
+        H_td = H_list[n][1]
+        spmvpy_csr(H.data, H.indices, H.indptr, psi, H_td(t, args), out)
 
-    return H * psi
+    return out
 
 
 def psi_list_td_with_state(t, psi, H_list_and_args):
@@ -263,15 +278,21 @@ def psi_list_td_with_state(t, psi, H_list_and_args):
     H_list = H_list_and_args[0]
     args = H_list_and_args[1]
 
-    H = H_list[0][0] * H_list[0][1](t, psi, args)
+    H = H_list[0][0]
+    H_td = H_list[0][1]
+    out = np.zeros(psi.shape[0],dtype=complex)
+    spmvpy_csr(H.data, H.indices, H.indptr,
+                psi, H_td(t, args), out)
     for n in range(1, len(H_list)):
         #
         # args[n][0] = the sparse data for a Qobj in operator form
         # args[n][1] = function callback giving the coefficient
         #
-        H = H + H_list[n][0] * H_list[n][1](t, psi, args)
+        H = H_list[n][0]
+        H_td = H_list[n][1]
+        spmvpy_csr(H.data, H.indices, H.indptr, psi, H_td(t, args), out)
 
-    return H * psi
+    return out
 
 
 # -----------------------------------------------------------------------------

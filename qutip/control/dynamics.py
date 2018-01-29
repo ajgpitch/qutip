@@ -93,6 +93,47 @@ def _is_string(var):
         return False
 
     return False
+    
+def _check_ctrls_container(ctrls):
+    """
+    Check through the controls container.
+    Convert to an array if its a list of lists
+    return the processed container
+    raise type error if the container structure is invalid
+    """
+    if isinstance(ctrls, (list, tuple)):
+        # Check to see if list of lists
+        try:
+            if isinstance(ctrls[0], (list, tuple)):
+                ctrls = np.array(ctrls)
+        except:
+            pass
+        
+    if isinstance(ctrls, np.ndarray):
+        if len(ctrls.shape) != 2:
+            raise TypeError("Incorrect shape for ctrl dyn gen array")
+        for k in range(ctrls.shape[0]):
+            for j in range(ctrls.shape[1]):
+                if not isinstance(ctrls[k, j], Qobj):
+                    raise TypeError("All control dyn gen must be Qobj")
+    elif isinstance(ctrls, (list, tuple)):
+        for ctrl in ctrls:
+            if not isinstance(ctrl, Qobj):
+                raise TypeError("All control dyn gen must be Qobj") 
+    else:
+        raise TypeError("Controls list or array not set correctly")
+    
+    return ctrls
+    
+def _check_drift_dyn_gen(drift):
+    if not isinstance(drift, Qobj):
+        if not isinstance(drift, (list, tuple)):
+            raise TypeError("drift should be a Qobj or a list of Qobj")
+        else:
+            for d in drift:
+                if not isinstance(d, Qobj):
+                    raise TypeError(
+                        "drift should be a Qobj or a list of Qobj")
 
 warnings.simplefilter('always', DeprecationWarning) #turn off filter
 def _attrib_deprecation(message, stacklevel=3):
@@ -373,6 +414,7 @@ class Dynamics(object):
         self.sys_dims = None
         self.sys_shape = None
         self.time_depend_drift = False
+        self.time_depend_ctrl_dyn_gen = False
         # These internal attributes will be of the internal operator data type
         # used to compute the evolution
         # Note this maybe ndarray, Qobj or some other depending on oper_dtype
@@ -380,6 +422,7 @@ class Dynamics(object):
         self._ctrl_dyn_gen = None
         self._phased_ctrl_dyn_gen = None
         self._dyn_gen_phase = None
+        self._phase_application = None
         self._initial = None
         self._target = None
         self._onto_evo_target = None
@@ -416,8 +459,11 @@ class Dynamics(object):
         self.log_level = self.config.log_level
         # Internal flags
         self._dyn_gen_mapped = False
+        self._evo_initialized = False
         self._timeslots_initialized = False
         self._ctrls_initialized = False
+        self._ctrl_dyn_gen_checked = False
+        self._drift_dyn_gen_checked = False
         # Unitary checking
         self.unitarity_check_level = 0
         self.unitarity_tol = 1e-10
@@ -601,7 +647,7 @@ class Dynamics(object):
         Set various memory optimisation attributes based on the 
         memory_optimization attribute
         If they have been set already, e.g. in apply_params
-        then they will not be overidden here
+        then they will not be overridden here
         """
         logger.info("Setting memory optimisations for level {}".format(
                     self.memory_optimization))
@@ -662,7 +708,11 @@ class Dynamics(object):
                 dg = self.drift_dyn_gen[0]
             else:
                 dg = self.drift_dyn_gen
-            for c in self.ctrl_dyn_gen:
+            if self.time_depend_ctrl_dyn_gen:
+                ctrls = self.ctrl_dyn_gen[0, :]
+            else:
+                ctrls = self.ctrl_dyn_gen
+            for c in ctrls:
                dg = dg + c
 
             N = dg.data.shape[0]
@@ -687,21 +737,10 @@ class Dynamics(object):
         Set the time slices and cumulative time
         """
         # check evolution operators
-        if not isinstance(self.drift_dyn_gen, Qobj):
-            if not isinstance(self.drift_dyn_gen, (list, tuple)):
-                raise TypeError("drift should be a Qobj or a list of Qobj")
-            else:
-                for d in self.drift_dyn_gen:
-                    if not isinstance(d, Qobj):
-                        raise TypeError(
-                            "drift should be a Qobj or a list of Qobj")
-
-        if not isinstance(self.ctrl_dyn_gen, (list, tuple)):
-            raise TypeError("ctrls should be a list of Qobj")
-        else:
-            for ctrl in self.ctrl_dyn_gen:
-                if not isinstance(ctrl, Qobj):
-                    raise TypeError("ctrls should be a list of Qobj")
+        if not self._drift_dyn_gen_checked:
+            _check_drift_dyn_gen(self.drift_dyn_gen)
+        if not self._ctrl_dyn_gen_checked:
+            self.ctrl_dyn_gen = _check_ctrls_container(self.ctrl_dyn_gen)
 
         if not isinstance(self.initial, Qobj):
             raise TypeError("initial must be a Qobj")
@@ -710,9 +749,13 @@ class Dynamics(object):
             raise TypeError("target must be a Qobj")
 
         self.refresh_drift_attribs()
-        self._set_memory_optimizations()
         self.sys_dims = self.initial.dims
         self.sys_shape = self.initial.shape
+        # Set the phase application method
+        self._init_phase()
+        self._set_memory_optimizations()
+        n_ts = self.num_tslots
+        n_ctrls = self.num_ctrls
         if self.oper_dtype == Qobj:
             self._initial = self.initial
             self._target = self.target
@@ -725,7 +768,15 @@ class Dynamics(object):
                 self._drift_dyn_gen = [d.full() for d in self.drift_dyn_gen]
             else:
                 self._drift_dyn_gen = self.drift_dyn_gen.full()
-            self._ctrl_dyn_gen = [ctrl.full() for ctrl in self.ctrl_dyn_gen]
+            if self.time_depend_ctrl_dyn_gen:
+                self._ctrl_dyn_gen = np.empty([n_ts, n_ctrls], dtype=object)
+                for k in range(n_ts):
+                    for j in range(n_ctrls):
+                        self._ctrl_dyn_gen[k, j] = \
+                                    self.ctrl_dyn_gen[k, j].full()
+            else:
+                self._ctrl_dyn_gen = [ctrl.full() 
+                                        for ctrl in self.ctrl_dyn_gen]
         elif self.oper_dtype == sp.csr_matrix:
             self._initial = self.initial.data
             self._target = self.target.data
@@ -733,20 +784,38 @@ class Dynamics(object):
                 self._drift_dyn_gen = [d.data for d in self.drift_dyn_gen]
             else:
                 self._drift_dyn_gen = self.drift_dyn_gen.data
-            self._ctrl_dyn_gen = [ctrl.data for ctrl in self.ctrl_dyn_gen]
+                
+            if self.time_depend_ctrl_dyn_gen:
+                self._ctrl_dyn_gen = np.empty([n_ts, n_ctrls], dtype=object)
+                for k in range(n_ts):
+                    for j in range(n_ctrls):
+                        self._ctrl_dyn_gen[k, j] = \
+                                    self.ctrl_dyn_gen[k, j].data
+            else:
+                self._ctrl_dyn_gen = [ctrl.data for ctrl in self.ctrl_dyn_gen]
         else:
             logger.warn("Unknown option '{}' for oper_dtype. "
                 "Assuming that internal drift, ctrls, initial and target "
                 "have been set correctly".format(self.oper_dtype))
-        if self.cache_phased_dyn_gen and not self.dyn_gen_phase is None:
-            self._phased_ctrl_dyn_gen = [self._apply_phase(ctrl)
-                                            for ctrl in self._ctrl_dyn_gen]
+
+        if self.cache_phased_dyn_gen:
+            if self.time_depend_ctrl_dyn_gen:
+                self._phased_ctrl_dyn_gen = np.empty([n_ts, n_ctrls], 
+                                                     dtype=object)
+                for k in range(n_ts):
+                    for j in range(n_ctrls):
+                        self._phased_ctrl_dyn_gen[k, j] = self._apply_phase(
+                                    self._ctrl_dyn_gen[k, j])
+            else:
+                self._phased_ctrl_dyn_gen = [self._apply_phase(ctrl)
+                                                for ctrl in self._ctrl_dyn_gen]
+                                                
         self._dyn_gen = [object for x in range(self.num_tslots)]
         if self.cache_phased_dyn_gen:
             self._phased_dyn_gen = [object for x in range(self.num_tslots)]
         self._prop = [object for x in range(self.num_tslots)]
         if self.prop_computer.grad_exact and self.cache_prop_grad:
-            self._prop_grad = np.empty([self.num_tslots, self._num_ctrls],
+            self._prop_grad = np.empty([self.num_tslots, self.num_ctrls],
                                       dtype=object)
         # Time evolution operator (forward propagation)
         self._fwd_evo = [object for x in range(self.num_tslots+1)]
@@ -758,7 +827,7 @@ class Dynamics(object):
             # Onward propagation overlap with inverse target
             self._onto_evo = [object for x in range(self.num_tslots+1)]
             self._onto_evo[self.num_tslots] = self._get_onto_evo_target()
-
+            
         if isinstance(self.prop_computer, propcomp.PropCompDiag):
             self._create_decomp_lists()
 
@@ -773,7 +842,110 @@ class Dynamics(object):
             self.dump.create_dump_dir()
             logger.info("Dynamics dump will be written to:\n{}".format(
                             self.dump.dump_dir))
+            
+        self._evo_initialized = True
 
+    @property
+    def dyn_gen_phase(self):
+        """
+        Some op that is applied to the dyn_gen before expontiating to
+        get the propagator.
+        See `phase_application` for how this is applied
+        """
+        # Note that if this returns None then _apply_phase will never be
+        # called
+        return self._dyn_gen_phase
+    
+    @dyn_gen_phase.setter
+    def dyn_gen_phase(self, value):
+        self._dyn_gen_phase = value
+    
+    @property
+    def phase_application(self):
+        """
+        phase_application : scalar(string), default='preop'
+        Determines how the phase is applied to the dynamics generators
+         - 'preop'  : P = expm(phase*dyn_gen)
+         - 'postop' : P = expm(dyn_gen*phase)
+         - 'custom' : Customised phase application
+        The 'custom' option assumes that the _apply_phase method has been
+        set to a custom function
+        """
+        return self._phase_application
+
+    @phase_application.setter
+    def phase_application(self, value):
+        self._set_phase_application(value)
+        
+    def _set_phase_application(self, value):
+        self._config_phase_application(value)
+        self._phase_application = value
+
+    def _config_phase_application(self, ph_app=None):
+        """
+        Set the appropriate function for the phase application
+        """
+        err_msg = ("Invalid value '{}' for phase application. Must be either "
+                   "'preop', 'postop' or 'custom'".format(ph_app))
+        
+        if ph_app is None:
+            ph_app = self._phase_application
+            
+        try:
+            ph_app = ph_app.lower()
+        except:
+            raise ValueError(err_msg)
+
+        if ph_app == 'preop':
+            self._apply_phase = self._apply_phase_preop
+        elif ph_app == 'postop':
+            self._apply_phase = self._apply_phase_postop
+        elif ph_app == 'custom':
+            # Do nothing, assume _apply_phase set elsewhere
+            pass
+        else:
+            raise ValueError(err_msg)
+
+    def _init_phase(self):
+        if self.dyn_gen_phase is not None:
+            self._config_phase_application()
+        else:
+            self.cache_phased_dyn_gen = False
+            
+    def _apply_phase(self, dg):
+        """
+        This default method does nothing.
+        It will be set to another method automatically if `phase_application`
+        is 'preop' or 'postop'. It should be overridden repointed if
+        `phase_application` is 'custom'
+        It will never be called if `dyn_gen_phase` is None
+        """
+        return dg
+            
+    def _apply_phase_preop(self, dg):
+        """
+        Apply phasing operator to dynamics generator.
+        This called during the propagator calculation.
+        In this case it will be applied as phase*dg
+        """
+        if hasattr(self.dyn_gen_phase, 'dot'):
+            phased_dg = self._dyn_gen_phase.dot(dg)
+        else:
+            phased_dg = self._dyn_gen_phase*dg
+        return phased_dg
+
+    def _apply_phase_postop(self, dg):
+        """
+        Apply phasing operator to dynamics generator.
+        This called during the propagator calculation.
+        In this case it will be applied as dg*phase
+        """
+        if hasattr(self.dyn_gen_phase, 'dot'):
+            phased_dg = dg.dot(self._dyn_gen_phase)
+        else:
+            phased_dg = dg*self._dyn_gen_phase
+        return phased_dg
+        
     def _create_decomp_lists(self):
         """
         Create lists that will hold the eigen decomposition
@@ -810,8 +982,6 @@ class Dynamics(object):
                 " set. A default should be assigned by the Dynamics subclass")
 
         self.ctrl_amps = None
-        self._num_ctrls = len(self.ctrl_dyn_gen)
-
         if not self._timeslots_initialized:
             init_tslots = True
         if init_tslots:
@@ -948,11 +1118,17 @@ class Dynamics(object):
         _func_deprecation("'get_num_ctrls' has been replaced by "
                          "'num_ctrls' property")
         return self.num_ctrls
-
+        
     def _get_num_ctrls(self):
-        if not isinstance(self.ctrl_dyn_gen, (list, tuple)):
-            raise errors.UsageError("Controls list not set")
-        self._num_ctrls = len(self.ctrl_dyn_gen)
+        if not self._ctrl_dyn_gen_checked:
+            self.ctrl_dyn_gen = _check_ctrls_container(self.ctrl_dyn_gen)
+            self._ctrl_dyn_gen_checked = True
+        if isinstance(self.ctrl_dyn_gen, np.ndarray):
+            self._num_ctrls = self.ctrl_dyn_gen.shape[1]
+            self.time_depend_ctrl_dyn_gen = True
+        else:
+            self._num_ctrls = len(self.ctrl_dyn_gen)    
+        
         return self._num_ctrls
 
     @property
@@ -1042,33 +1218,15 @@ class Dynamics(object):
         else:
             dg = self._drift_dyn_gen
         for j in range(self._num_ctrls):
-            dg = dg + self.ctrl_amps[k, j]*self._ctrl_dyn_gen[j]
+            if self.time_depend_ctrl_dyn_gen:
+                dg = dg + self.ctrl_amps[k, j]*self._ctrl_dyn_gen[k, j]
+            else:
+                dg = dg + self.ctrl_amps[k, j]*self._ctrl_dyn_gen[j]
 
         self._dyn_gen[k] = dg
         if self.cache_phased_dyn_gen:
             self._phased_dyn_gen[k] = self._apply_phase(dg)
-
-    @property
-    def dyn_gen_phase(self):
-        """
-        Some preop that is applied to the dyn_gen before expontiating to
-        get the propagator
-        """
-        return self._dyn_gen_phase
-    
-    def _apply_phase(self, dg):
-        """
-        Apply some phase factor or operator
-        """
-        if self.dyn_gen_phase is None:
-            phased_dg = dg
-        else:
-            if hasattr(self.dyn_gen_phase, 'dot'):
-                phased_dg = self.dyn_gen_phase.dot(dg)
-            else:
-                phased_dg = self.dyn_gen_phase*dg
-        return phased_dg
-
+   
     def get_dyn_gen(self, k):
         """
         Get the combined dynamics generator for the timeslot
@@ -1094,13 +1252,25 @@ class Dynamics(object):
         """
         _func_deprecation("'get_ctrl_dyn_gen' has been replaced by "
                         "'_get_phased_ctrl_dyn_gen'")
-        return self._get_phased_ctrl_dyn_gen(j)
+        return self._get_phased_ctrl_dyn_gen(0, j)
 
-    def _get_phased_ctrl_dyn_gen(self, j):
+    def _get_phased_ctrl_dyn_gen(self, k, j):
         if self._phased_ctrl_dyn_gen is not None:
-            return self._phased_ctrl_dyn_gen[j]
+            if self.time_depend_ctrl_dyn_gen:
+                return self._phased_ctrl_dyn_gen[k, j]
+            else:
+                return self._phased_ctrl_dyn_gen[j]
         else:
-            return self._apply_phase(self._ctrl_dyn_gen[j])
+            if self.time_depend_ctrl_dyn_gen:
+                if self.dyn_gen_phase is None:
+                    return self._ctrl_dyn_gen[k, j]
+                else:
+                    return self._apply_phase(self._ctrl_dyn_gen[k, j])
+            else:
+                if self.dyn_gen_phase is None:
+                    return self._ctrl_dyn_gen[j]
+                else:
+                    return self._apply_phase(self._ctrl_dyn_gen[j])
 
     @property
     def dyn_gen(self):
@@ -1352,6 +1522,7 @@ class DynamicsUnitary(Dynamics):
         self.ctrl_ham = None
         self.H = None
         self._dyn_gen_phase = -1j
+        self._phase_application = 'preop'
         self.apply_params()
 
     def _create_computers(self):
@@ -1558,6 +1729,7 @@ class DynamicsSymplectic(Dynamics):
         self.id_text = 'SYMPL'
         self._omega = None
         self._omega_qobj = None
+        self._phase_application = 'postop'
         self.grad_exact = True
         self.apply_params()
 
@@ -1596,29 +1768,37 @@ class DynamicsSymplectic(Dynamics):
             else:
                  self._omega = omg
         return self._omega
-    
+        
+    def _set_phase_application(self, value):
+        Dynamics._set_phase_application(self, value)
+        if self._evo_initialized:
+            phase = self._get_dyn_gen_phase()
+            if phase is not None:
+                self._dyn_gen_phase = phase
+
+    def _get_dyn_gen_phase(self):
+        if self._phase_application == 'postop':
+            phase = -self._get_omega()
+        elif self._phase_application == 'preop':
+            phase = self._get_omega()
+        elif self._phase_application == 'custom':
+            phase = None
+            # Assume phase set by user
+        else:
+            raise ValueError("No option for phase_application "
+                             "'{}'".format(self._phase_application))
+        return phase
+                
     @property
     def dyn_gen_phase(self):
         """
-        The prephasing operator for the symplectic group generators
+        The phasing operator for the symplectic group generators
         usually refered to as \Omega
+        By default this is applied as 'postop' dyn_gen*-\Omega
+        If phase_application is 'preop' it is applied as \Omega*dyn_gen
         """
         # Cannot be calculated until the dyn_shape is set
-        # that is after the drift Hamitonan has been set.
+        # that is after the drift dyn gen has been set.
         if self._dyn_gen_phase is None:
-            self._dyn_gen_phase = self._get_omega()
-
+            self._dyn_gen_phase = self._get_dyn_gen_phase()
         return self._dyn_gen_phase
-
-    def _apply_phase(self, dg):
-        """
-        Apply some phase factor or operator
-        """
-        if self.dyn_gen_phase is None:
-            phased_dg = dg
-        else:
-            if hasattr(self.dyn_gen_phase, 'dot'):
-                phased_dg = -dg.dot(self.dyn_gen_phase)
-            else:
-                phased_dg = -dg*self.dyn_gen_phase
-        return phased_dg

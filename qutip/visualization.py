@@ -592,7 +592,7 @@ def plot_energy_levels(H_list, N=0, labels=None, show_ylabels=False,
     yticks = []
 
     x = 0
-    evals0 = H.eigenenergies(eigvals=N) / (2 * np.pi)
+    evals0 = H.eigenenergies(eigvals=N)
     for e_idx, e in enumerate(evals0[:N]):
         ax.plot([x, x + 2], np.array([1, 1]) * e, 'b', linewidth=2)
         yticks.append(e)
@@ -602,7 +602,7 @@ def plot_energy_levels(H_list, N=0, labels=None, show_ylabels=False,
     for H1 in H_list[1:]:
 
         H = H + H1
-        evals1 = H.eigenenergies() / (2 * np.pi)
+        evals1 = H.eigenenergies()
 
         for e_idx, e in enumerate(evals1[:N]):
             ax.plot([x, x + 1], np.array([evals0[e_idx], e]), 'k:')
@@ -703,9 +703,9 @@ def fock_distribution(rho, offset=0, fig=None, ax=None,
                                   unit_y_range=unit_y_range)
 
 
-def plot_wigner(rho, fig=None, ax=None, figsize=(8, 4),
+def plot_wigner(rho, fig=None, ax=None, figsize=(6, 6),
                 cmap=None, alpha_max=7.5, colorbar=False,
-                method='iterative', projection='2d'):
+                method='clenshaw', projection='2d'):
     """
     Plot the the Wigner function for a density matrix (or ket) that describes
     an oscillator mode.
@@ -735,7 +735,7 @@ def plot_wigner(rho, fig=None, ax=None, figsize=(8, 4),
         Whether (True) or not (False) a colorbar should be attached to the
         Wigner function graph.
 
-    method : string {'iterative', 'laguerre', 'fft'}
+    method : string {'clenshaw', 'iterative', 'laguerre', 'fft'}
         The method used for calculating the wigner function. See the
         documentation for qutip.wigner for details.
 
