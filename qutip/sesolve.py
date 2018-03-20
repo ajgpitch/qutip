@@ -43,12 +43,14 @@ import numpy as np
 import scipy.integrate
 from scipy.linalg import norm as la_norm
 import qutip.settings as qset
-from qutip.qobj import Qobj, isket
+from qutip.qobj import Qobj
 from qutip.rhs_generate import rhs_generate
-from qutip.solver import Result, Options, config, _solver_safety_check
+from qutip.solver import (Result, Options, DynamicsSolver,
+                          config, _solver_safety_check)
+
 from qutip.rhs_generate import _td_format_check, _td_wrap_array_str
 from qutip.interpolate import Cubic_Spline
-from qutip.superoperator import operator_to_vector, vector_to_operator, spre, mat2vec
+from qutip.superoperator import operator_to_vector, spre
 from qutip.settings import debug
 from qutip.cy.spmatfuncs import (cy_expect_psi, cy_ode_rhs,
                                  cy_ode_psi_func_td,
@@ -68,8 +70,7 @@ if debug:
 
 
 def sesolve(H, psi0, tlist, e_ops=[], args={}, options=None,
-            progress_bar=None,
-            _safe_mode=True):
+            progress_bar=None, _safe_mode=True):
     """
     Schrodinger equation evolution of a state vector or unitary matrix
     for a given Hamiltonian.
@@ -103,7 +104,7 @@ def sesolve(H, psi0, tlist, e_ops=[], args={}, options=None,
     e_ops : list of :class:`qutip.qobj` / callback function single
         single operator or list of operators for which to evaluate
         expectation values.
-        Must be empty list operator evolution
+        Must be empty list for operator evolution
 
     args : *dictionary*
         dictionary of parameters for time-dependent Hamiltonians
@@ -118,7 +119,7 @@ def sesolve(H, psi0, tlist, e_ops=[], args={}, options=None,
     Returns
     -------
 
-    output: :class:`qutip.solver`
+    output: :class:`qutip.solver.Result`
 
         An instance of the class :class:`qutip.solver`, which contains either
         an *array* of expectation values for the times specified by `tlist`, or
@@ -828,3 +829,112 @@ def _generic_ode_solve(r, psi0, tlist, e_ops, opt, progress_bar, dims=None):
         output.final_state = Qobj(cdata, dims=dims)
 
     return output
+
+class UnitarySolver(DynamicsSolver):
+    """
+    Solver for unitary quantum dynamics.
+    Solves Schrodinger equation for both states and operators
+
+    Parameters
+    ----------
+    H : :class: qutip.Qobj
+        Hamiltonian dynamics generator
+        Could be single operator
+        Or callback function
+        Or string format time-dependent operator(s)
+
+    Attributes
+    ----------
+    H : :class: qutip.Qobj
+        Hamiltonian dynamics generator
+        Could be single operator
+        Or callback function
+        Or string format time-dependent operator(s)
+
+    Methods
+    -------
+    run()
+        Run the solver as it is currently configured or with given parameters
+
+    """
+
+    def __init__(self, H, initial=None, tlist=None, e_ops=[], args={},
+            options=None, progress_bar=None):
+        DynamicsSolver.__init__(self, H, initial=initial, tlist=tlist,
+                                e_ops=e_ops, args=args, options=options,
+                                progress_bar=progress_bar)
+
+    @property
+    def H(self):
+        return self.dyn_gen
+
+    @H.setter
+    def H(self, dyn_gen):
+        self.dyn_gen = dyn_gen
+
+    def run(self, H=None, initial=None, tlist=None, e_ops=None, args=None,
+            options=None, progress_bar=None, _safe_mode=True):
+        """
+        Run the solver with the given parameters or those defined for the
+        object where they are not given.
+
+        Parameters
+        ----------
+        dyn_gen : :class: qutip.Qobj
+            Dynamics generator
+            Could be Hamiltonian or Lindblad operator
+            Or callback function
+            Or string format time-dependent operator(s)
+
+        initial : :class: qutip.Qobj
+            Initial state or operator
+
+        tlist : array_like
+            times for :math:`t` for which results will be generated
+
+        e_ops : list of :class:`qutip.qobj` or callback function single
+            single operator or list of operators for which to evaluate
+            expectation values.
+            Ignored in operator evolution
+
+        options : :class: qutip.solver.Options
+            Options for the ODE solver
+
+        progress_bar : qutip.BaseProgressBar
+            Optional instance of BaseProgressBar, or a subclass thereof, for
+            showing the progress of the simulation.
+
+        Returns
+        -------
+        result: :class:`qutip.solver.Result`
+            Result object which contains either
+            Expectation values for the state, or
+            the state / operator at each of the times in tlist
+        """
+
+        if H is None:
+            H = self.H
+
+        if initial is None:
+            initial = self.initial
+
+        if tlist is None:
+            tlist = self.tlist
+
+        if e_ops is None:
+            e_ops = self.e_ops
+
+        if args is None:
+            args = self.args
+
+        if options is None:
+            options = self.options
+
+        if progress_bar is None:
+            progress_bar = self.progress_bar
+
+        self.result = sesolve(H, initial, tlist, e_ops=e_ops, args=args,
+                              options=options,  progress_bar=progress_bar,
+                              _safe_mode=_safe_mode)
+
+        return self.result
