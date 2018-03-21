@@ -77,7 +77,8 @@ class ControlSolver(object):
     """
     #TODO: Make this an abstract class
 
-    def __init__(self, evo_solver, cost_meter, initial, target, ctrl_dyn_gen):
+    def __init__(self, evo_solver, cost_meter, initial, target,
+                 drift_dyn_gen, ctrl_dyn_gen):
         #TODO: Check type of solver
         self.evo_solver = evo_solver
         if not isinstance(cost_meter, qoccost.CostMeter):
@@ -86,12 +87,13 @@ class ControlSolver(object):
         self.cost_meter = cost_meter
         self.initial = self._check_initial(initial)
         self.target = self._check_target(target)
+        self.drift_dyn_gen = self._check_drift(drift_dyn_gen)
         self.ctrl_dyn_gen = self._check_ctrls(ctrl_dyn_gen)
 
     def reset(self):
         self.evo_solver = None
         self.cost_meter = None
-        self._drift_dyn_gen = None
+        self.drift_dyn_gen = None
         self.ctrl_dyn_gen = None
         self.initial = None
         self.target = None
@@ -99,6 +101,7 @@ class ControlSolver(object):
 
         self._solve_initialized = False
         self._num_ctrls = 0
+        self._dyn_gen_dims = None
 
     def clear(self):
         self.evo_solver_result = None
@@ -141,14 +144,13 @@ class ControlSolver(object):
     def ctrls_initialized(self):
         return self._ctrls_initialized
 
-    @property
-    def drift_dyn_gen(self):
-        """Drift or 'system' dynamics generator, e.g Hamiltonian"""
-        return self._get_drift_dyn_gen()
+#    @property
+#    def drift_dyn_gen(self):
+#        """Drift or 'system' dynamics generator, e.g Hamiltonian"""
+#        return self._get_drift_dyn_gen()
 
     def _get_drift_dyn_gen(self):
-        self._drift_dyn_gen = self.evo_solver.dyn_gen
-        return self._drift_dyn_gen
+        return self.drift_dyn_gen
 
     @property
     def num_ctrls(self):
@@ -180,7 +182,28 @@ class ControlSolver(object):
             raise TypeError("Invalid type {} for {} 'initial'. "
                             "Must be of type {}.".format(type(initial),
                                                         desc, Qobj))
+        self._dyn_gen_dims = [initial.dims[0], initial.dims[0]]
         return initial
+
+    def _check_dg(self, dg, name, dims=None):
+        self._check_dg_oper(dg, name, dims)
+
+    def _check_dg_oper(self, dg, name, dims=None):
+        """Check dynamics generator operator"""
+
+        if not isinstance(dg, Qobj):
+            raise TypeError("Invalid type {} for {}. "
+                            "Must be of type {}.".format(type(dg),
+                                                        name, Qobj))
+        if not dg.isoper:
+            raise TypeError("Invalid Qobj type {} for {}. "
+                            "Must be 'oper' or 'super'.".format(dg.type, name))
+
+        if dims is not None:
+            if dg.dims != dims:
+                raise ValueError("Invalid dims {} for {}. "
+                                "Must be compatible with initial oper / state "
+                                "dims.".format(dg.dims, dims))
 
     def _check_target(self, target=None):
         # In separate function, as may be overridden
@@ -196,7 +219,7 @@ class ControlSolver(object):
                                                         desc, Qobj))
 
         if target.dims != self.initial.dims:
-            raise TypeError("Incompatible quantum object dimensions "
+            raise TypeError("Incompatible Qobj dimensions "
                             "for 'initial' and 'target'")
         return target
 
@@ -208,14 +231,9 @@ class ControlSolver(object):
             drift_dyn_gen = self.drift_dyn_gen
             desc = 'attribute'
 
-        if not isinstance(drift_dyn_gen, Qobj):
-            raise TypeError("Invalid type {} for {} 'drift_dyn_gen'. "
-                            "Must be of type {}. Check "
-                            "evo_solver.dyn_gen".format(type(drift_dyn_gen),
-                                                        desc, Qobj))
-        if not drift_dyn_gen.isoper:
-            raise TypeError("'drift_dyn_gen' must be an operator, "
-                            "check evo_solver")
+        self._check_dg(drift_dyn_gen,
+                            "{} '{}'".format(desc, 'drift_dyn_gen'),
+                            dims=self._dyn_gen_dims)
 
         # This check is not valid for all evo_solvers
         # Should be moved to the evo_solver
@@ -233,18 +251,13 @@ class ControlSolver(object):
             desc = 'attribute'
 
         if self._get_num_ctrls(ctrl_dyn_gen) == 0:
-            raise TypeError("Invalid type {} for {} 'ctrl_dyn_gen'. "
-                            "Must be iterable.".format(type(ctrl_dyn_gen), desc))
+            raise TypeError("Invalid type {} for {} 'ctrl_dyn_gen'. Must "
+                            "be iterable.".format(type(ctrl_dyn_gen), desc))
         else:
             for j, ctrl in enumerate(ctrl_dyn_gen):
-                if not isinstance(ctrl, Qobj):
-                    raise TypeError("Invalid type {} for 'ctrl_dyn_gen[{}]'. "
-                                    "Must be a {}.".format(type(ctrl), j, Qobj))
-                else:
-                    if ctrl.dims != self.drift_dyn_gen.dims:
-                        raise TypeError("Incompatible quantum object dimensions "
-                                        "for 'ctrl_dyn_gen[{}]' and "
-                                        "'drift_dyn_gen'".format(j))
+                self._check_dg(ctrl,
+                               "{} '{}[{}]'".format(desc, 'ctrl_dyn_gen', j),
+                               dims=self._dyn_gen_dims)
         return ctrl_dyn_gen
 
     def init_solve(self):
@@ -270,7 +283,8 @@ class ControlSolver(object):
 class ControlSolverPWC(ControlSolver):
 
     def __init__(self, evo_solver, cost_meter, initial, target, ctrl_dyn_gen,
-                 tslot_duration, tlist=None, initial_amps=None):
+                 tslot_duration, tlist=None, initial_amps=None,
+                 solver_combines_dyn_gen=True):
         self.reset()
         ControlSolver.__init__(self, evo_solver, cost_meter, initial, target,
                                ctrl_dyn_gen)
@@ -278,6 +292,9 @@ class ControlSolverPWC(ControlSolver):
         self.tlist = self._check_tlist(tlist)
         #TODO: Check ctrl amps
         self.ctrl_amps = self._check_ctrl_amps(initial_amps)
+        # The plan is to use the solver internal combining of
+        # dynamics generators
+        self.solver_combines_dyn_gen = solver_combines_dyn_gen
 
     def reset(self):
         ControlSolver.reset(self)
@@ -420,7 +437,7 @@ class ControlSolverPWC(ControlSolver):
 
     def _get_combined_dyn_gen(self, k):
         """Combine the drift and control dynamics generators for the timeslot"""
-        dg = self._drift_dyn_gen.copy()
+        dg = self._get_drift_dyn_gen.copy()
         for j in range(self._num_ctrls):
             dg.data += self.ctrl_amps[k, j]*self._get_ctrl_dyn_gen(k, j).data
         return dg
@@ -429,6 +446,25 @@ class ControlSolverPWC(ControlSolver):
 
         self._dyn_gen = [self._get_combined_dyn_gen(k)
                             for k in range(self._num_tslots)]
+
+        self.evo_solver.dyn_gen = self._construct_td_dyn_gen()
+
+    def _check_dg(self, dg, name, dims=None):
+        #NOTE: This overrides ControlSolver method
+
+        if isinstance(dg, Qobj):
+            # No time dependance
+            self._check_dg_oper(dg, name, dims)
+        elif isinstance(dg, list):
+            if len(dg) != 2:
+                raise TypeError("Invalid td format for {}".format(name))
+                self._check_dg_oper(dg[0], name, dims)
+            if not _is_string(dg[1]):
+                raise TypeError("Invalid td format for {}. Only string type "
+                                 "td is supported by the "
+                                 "ctrl solver.".format(name))
+        else:
+            raise TypeError("Invalid type for {}".format(name))
 
     def _get_optim_params(self):
         """Return the params to be optimised"""
@@ -493,6 +529,47 @@ class ControlSolverPWC(ControlSolver):
         #print("time: {}".format(t))
         return self._dyn_gen[k]
 
+    def _build_td_dg(self, dg, j=-1):
+        """Specific dynamics generator in str type td format"""
+
+        # assumes dyn gen opers have been checked for format
+        dg_coeff = None
+        if isinstance(dg, Qobj):
+            # No other time dependance
+            dg_op = dg
+        elif isinstance(dg, list):
+            dg_op = dg[0]
+            dg_coeff = dg[1]
+        else:
+            # this should never happen, as should have been checked
+            raise TypeError("Invalid type for ctrl "
+                             "dynamics generator {}".format(j))
+
+        #TODO: support td drift here
+        if j >= 0:
+            # Ctrl not drift
+            T = self.tslot_time[-1]
+            amp_str = "(0 if (t >= {}) else {}[int(%d * (t/{})), {}]".format(
+                        T, 'ctrlamps', self._num_tslots, T, j)
+            if dg_coeff is not None:
+                dg_coeff += "*" + amp_str
+
+        if dg_coeff is None:
+            return dg_op
+        else:
+            return [dg_op, dg_coeff]
+
+    def _construct_td_dyn_gen(self):
+        """
+        Make the string type td dynamics generator
+        """
+
+        dg_comb = [self._build_td_dg(self.drift_dyn_gen)]
+        for j, cdg in enumerate(self.ctrl_dyn_gen):
+            dg_comb.append(self._build_td_dg(self.drift_dyn_gen, j))
+
+        return dg_comb
+
     def solve(self, skip_init=False):
         """
         Solve the evolution with the PWC dynamics generators
@@ -500,12 +577,17 @@ class ControlSolverPWC(ControlSolver):
         if not self._solve_initialized and not skip_init:
             self.init_solve()
 
-        self._update_dyn_gen()
+        if self.solver_combines_dyn_gen:
+            self.evo_solver.args['ctrlamps'] = self.ctrl_amps
+        else:
+            self._update_dyn_gen()
 
-        #FIXME: For now we will assume that this is the HEOM solver
-        self.evo_solver.H_sys = self._get_td_dyn_gen
-        self.evo_solver.td_type = 'f'
-        self.evo_solver_result = self.evo_solver.run(self.initial, self.tlist)
+        #FIXME: Need to make work with the HEOM solver
+
+        self.evo_solver_result = self.evo_solver.run(initial=self.initial,
+                                                     tlist=self.tlist)
         self.cost = self.cost_meter.compute_cost(
                                 self.evo_solver_result.states[-1], self.target)
         return self.cost
+
+
