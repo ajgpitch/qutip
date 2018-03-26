@@ -45,6 +45,9 @@ import os
 import numpy as np
 # QuTiP
 from qutip import Qobj
+import qutip.solver
+from qutip.rhs_generate import rhs_clear
+from qutip.cy.utilities import _cython_build_cleanup
 # QuTiP logging
 import qutip.settings as qset
 import qutip.logging_utils as logging
@@ -90,6 +93,10 @@ class ControlSolver(object):
         self.drift_dyn_gen = self._check_drift(drift_dyn_gen)
         self.ctrl_dyn_gen = self._check_ctrls(ctrl_dyn_gen)
 
+    def __exit__(self):
+        if self.integ_rhs_tidyup:
+            self.tidyup_integ_td()
+
     def reset(self):
         self.evo_solver = None
         self.cost_meter = None
@@ -99,9 +106,13 @@ class ControlSolver(object):
         self.target = None
         self.clear()
 
-        self._solve_initialized = False
+        self._initialized = False
         self._num_ctrls = 0
         self._dyn_gen_dims = None
+
+        self.integ_rhs_reuse = True
+        self.integ_rhs_tidyup = True
+        self._integ_tdname = None
 
     def clear(self):
         self.evo_solver_result = None
@@ -280,14 +291,21 @@ class ControlSolver(object):
         # Abstract
         return False
 
+    def tidyup_integ_td(self):
+        if self._integ_tdname is not None:
+            _cython_build_cleanup(self._integ_tdname)
+        rhs_clear()
+
+
 class ControlSolverPWC(ControlSolver):
 
-    def __init__(self, evo_solver, cost_meter, initial, target, ctrl_dyn_gen,
+    def __init__(self, evo_solver, cost_meter, initial, target,
+                 drift_dyn_gen, ctrl_dyn_gen,
                  tslot_duration, tlist=None, initial_amps=None,
                  solver_combines_dyn_gen=True):
         self.reset()
         ControlSolver.__init__(self, evo_solver, cost_meter, initial, target,
-                               ctrl_dyn_gen)
+                               drift_dyn_gen, ctrl_dyn_gen)
         self.tslot_duration = self._check_tslot_duration(tslot_duration)
         self.tlist = self._check_tlist(tlist)
         #TODO: Check ctrl amps
@@ -307,6 +325,7 @@ class ControlSolverPWC(ControlSolver):
         self._total_time = 0.0
         self._tslot_time = None
         self._changed_amp_mask = None
+
 
 
     @property
@@ -444,10 +463,11 @@ class ControlSolverPWC(ControlSolver):
 
     def _init_dyn_gen(self):
 
-        self._dyn_gen = [self._get_combined_dyn_gen(k)
-                            for k in range(self._num_tslots)]
-
-        self.evo_solver.dyn_gen = self._construct_td_dyn_gen()
+        if self.solver_combines_dyn_gen:
+            self.evo_solver.dyn_gen = self._construct_td_dyn_gen()
+        else:
+            self._dyn_gen = [self._get_combined_dyn_gen(k)
+                                for k in range(self._num_tslots)]
 
     def _check_dg(self, dg, name, dims=None):
         #NOTE: This overrides ControlSolver method
@@ -488,7 +508,14 @@ class ControlSolverPWC(ControlSolver):
         self.ctrl_amps = self._check_ctrl_amps(ctrl_amps)
         self._init_dyn_gen()
 
-        self._solve_initialized = True
+        if self.evo_solver is not None:
+            if self.evo_solver.options is None:
+                self.evo_solver.options = qutip.solver.Options(
+                                            rhs_reuse=self.integ_rhs_reuse)
+            else:
+                self.evo_solver.options.rhs_reuse = self.integ_rhs_reuse
+
+        self._initialized = True
 
     def _set_ctrl_amp_params(self, optim_params, chg_mask=None):
         """Set the control amps based on the optimisation parameters"""
@@ -549,10 +576,14 @@ class ControlSolverPWC(ControlSolver):
         if j >= 0:
             # Ctrl not drift
             T = self.tslot_time[-1]
-            amp_str = "(0 if (t >= {}) else {}[int(%d * (t/{})), {}]".format(
-                        T, 'ctrlamps', self._num_tslots, T, j)
+            amp_str = "0 if (t >= {}) else {}[int({} * (t/{}))]".format(
+                        T, 'ctrlamps', self._num_tslots, T)
+#            amp_str = "0 if (t >= {}) else {}[int({} * (t/{})), {}]".format(
+#                        T, 'ctrlamps', self._num_tslots, T, j)
             if dg_coeff is not None:
-                dg_coeff += "*" + amp_str
+                dg_coeff = "({}*{})".format(amp_str, dg_coeff)
+            else:
+                dg_coeff = "({})".format(amp_str)
 
         if dg_coeff is None:
             return dg_op
@@ -564,9 +595,10 @@ class ControlSolverPWC(ControlSolver):
         Make the string type td dynamics generator
         """
 
+        self.tidyup_integ_td()
         dg_comb = [self._build_td_dg(self.drift_dyn_gen)]
         for j, cdg in enumerate(self.ctrl_dyn_gen):
-            dg_comb.append(self._build_td_dg(self.drift_dyn_gen, j))
+            dg_comb.append(self._build_td_dg(cdg, j))
 
         return dg_comb
 
@@ -574,11 +606,12 @@ class ControlSolverPWC(ControlSolver):
         """
         Solve the evolution with the PWC dynamics generators
         """
-        if not self._solve_initialized and not skip_init:
+        if not self._initialized and not skip_init:
             self.init_solve()
 
         if self.solver_combines_dyn_gen:
-            self.evo_solver.args['ctrlamps'] = self.ctrl_amps
+            self.evo_solver.args['ctrlamps'] = self.ctrl_amps.flatten()
+            print("Amps: {}".format(self.ctrl_amps.flatten()))
         else:
             self._update_dyn_gen()
 
@@ -589,5 +622,8 @@ class ControlSolverPWC(ControlSolver):
         self.cost = self.cost_meter.compute_cost(
                                 self.evo_solver_result.states[-1], self.target)
         return self.cost
+
+
+
 
 

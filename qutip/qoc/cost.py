@@ -186,6 +186,8 @@ class CostMeterUnitary(CostMeter):
         """
         if hasattr(A, 'shape'):
             norm = A.tr()
+        else:
+            norm = A
 
         if self.ignore_global_phase:
             return self.scale_factor * np.abs(norm)

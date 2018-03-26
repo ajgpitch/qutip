@@ -135,7 +135,6 @@ class Optimizer(object):
     Attributes
     ----------
 
-
     """
 
     def __init__(self, ctrl_solver):
