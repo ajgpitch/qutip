@@ -80,6 +80,10 @@ class ControlSolver(object):
     """
     #TODO: Make this an abstract class
 
+    # Define these as a class attribute, as it is used in the __del__
+    _integ_tdname = None
+    integ_rhs_tidyup = True
+
     def __init__(self, evo_solver, cost_meter, initial, target,
                  drift_dyn_gen, ctrl_dyn_gen):
         #TODO: Check type of solver
@@ -93,9 +97,16 @@ class ControlSolver(object):
         self.drift_dyn_gen = self._check_drift(drift_dyn_gen)
         self.ctrl_dyn_gen = self._check_ctrls(ctrl_dyn_gen)
 
-    def __exit__(self):
+    def __del__(self):
         if self.integ_rhs_tidyup:
             self.tidyup_integ_td()
+
+    def tidyup_integ_td(self):
+        if self._integ_tdname is not None:
+            print("cleaning up: {}".format(self._integ_tdname))
+            _cython_build_cleanup(self._integ_tdname)
+            self._integ_tdname = None
+        rhs_clear()
 
     def reset(self):
         self.evo_solver = None
@@ -291,11 +302,6 @@ class ControlSolver(object):
         # Abstract
         return False
 
-    def tidyup_integ_td(self):
-        if self._integ_tdname is not None:
-            _cython_build_cleanup(self._integ_tdname)
-        rhs_clear()
-
 
 class ControlSolverPWC(ControlSolver):
 
@@ -325,8 +331,6 @@ class ControlSolverPWC(ControlSolver):
         self._total_time = 0.0
         self._tslot_time = None
         self._changed_amp_mask = None
-
-
 
     @property
     def num_tslots(self):
@@ -619,6 +623,8 @@ class ControlSolverPWC(ControlSolver):
 
         self.evo_solver_result = self.evo_solver.run(initial=self.initial,
                                                      tlist=self.tlist)
+        if self.solver_combines_dyn_gen:
+            self._integ_tdname = qutip.solver.config.tdname
         self.cost = self.cost_meter.compute_cost(
                                 self.evo_solver_result.states[-1], self.target)
         return self.cost

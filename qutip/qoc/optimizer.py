@@ -206,6 +206,10 @@ class Optimizer(object):
         self.num_cost_calls = 0
         self.num_grad_calls = 0
 
+    def optim_end(self):
+        if self.ctrl_solver.integ_rhs_tidyup:
+            self.ctrl_solver.tidyup_integ_td()
+
 #    def _build_bounds_list(self):
 #        cfg = self.config
 #        dyn = self.dynamics
@@ -307,6 +311,7 @@ class Optimizer(object):
         self.wall_time_optim_end = timeit.default_timer()
         self.result._end_optim_update(self)
 
+        self.optim_end()
         return self.result
 #
 #    def _get_optim_var_vals(self):
