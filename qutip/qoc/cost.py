@@ -198,6 +198,7 @@ class CostMeterUnitary(CostMeter):
         """
 
         """
+        #TODO: Consider using the qutip fidelity function
         f = (final.dag()*target).tr()
         self._fidelity_prenorm = f
         self.fidelity = self._normalize(f)
@@ -251,6 +252,7 @@ class CostMeterSqFrobDiff(CostMeter):
         """
 
         """
+        #TODO: Consider using the qutip fidelity function
         diff = target - final
         self.cost = self._normalize(diff.dag()*diff)
         return self.cost
