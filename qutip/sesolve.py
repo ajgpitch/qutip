@@ -830,7 +830,7 @@ def _generic_ode_solve(r, psi0, tlist, e_ops, opt, progress_bar, dims=None):
 
     return output
 
-class UnitarySolver(DynamicsSolver):
+class SESolver(DynamicsSolver):
     """
     Solver for unitary quantum dynamics.
     Solves Schrodinger equation for both states and operators
