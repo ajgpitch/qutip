@@ -225,7 +225,7 @@ class ControlSolver(object):
             if dg.dims != dims:
                 raise ValueError("Invalid dims {} for {}. "
                                 "Must be compatible with initial oper / state "
-                                "dims.".format(dg.dims, dims))
+                                "dims {}.".format(dg.dims, name, dims))
 
     def _check_target(self, target=None):
         # In separate function, as may be overridden
