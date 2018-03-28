@@ -48,7 +48,8 @@ import qutip.settings as qset
 from qutip.qobj import Qobj, isket, isoper, issuper
 from qutip.superoperator import spre, spost, liouvillian, mat2vec, vec2mat
 from qutip.expect import expect_rho_vec
-from qutip.solver import Options, Result, config, _solver_safety_check
+from qutip.solver import (Result, Options, DynamicsSolver,
+                          config, _solver_safety_check)
 from qutip.cy.spmatfuncs import cy_ode_rhs, cy_ode_rho_func_td, spmvpy_csr
 from qutip.cy.spconvert import dense2D_to_fastcsr_fmode
 from qutip.cy.codegen import Codegen
@@ -220,10 +221,10 @@ def mesolve(H, rho0, tlist, c_ops=[], e_ops=[], args={}, options=None,
         e_ops = [e for e in e_ops.values()]
     else:
         e_ops_dict = None
-    
+
     if _safe_mode:
         _solver_safety_check(H, rho0, c_ops, e_ops, args)
-    
+
     if progress_bar is None:
         progress_bar = BaseProgressBar()
     elif progress_bar is True:
@@ -247,11 +248,11 @@ def mesolve(H, rho0, tlist, c_ops=[], e_ops=[], args={}, options=None,
     if (not options.rhs_reuse) or (not config.tdfunc):
         # reset config collapse and time-dependence flags to default values
         config.reset()
-    
+
     #check if should use OPENMP
     check_use_openmp(options)
-    
-    
+
+
     res = None
 
     #
@@ -615,7 +616,7 @@ def _mesolve_list_str_td(H_list, rho0, tlist, c_list, e_ops, args, opt,
                             "Hamiltonian (expected string format)")
 
 
-    
+
     # loop over all collapse operators
     for c_spec in c_list:
         if isinstance(c_spec, Qobj):
@@ -636,7 +637,7 @@ def _mesolve_list_str_td(H_list, rho0, tlist, c_list, e_ops, args, opt,
             n_not_const_terms +=1
             c = c_spec[0]
             c_coeff = c_spec[1]
-            
+
             if isoper(c):
                 cdc = c.dag() * c
                 L = spre(c) * spost(c.dag()) - 0.5 * spre(cdc) \
@@ -669,22 +670,22 @@ def _mesolve_list_str_td(H_list, rho0, tlist, c_list, e_ops, args, opt,
         else:
             raise TypeError("Incorrect specification of time-dependent " +
                             "collapse operators (expected string format)")
-    
-    
+
+
     #prepend the constant part of the liouvillian
     if Lconst != 0:
        Ldata = [Lconst.data.data]+Ldata
        Linds = [Lconst.data.indices]+Linds
        Lptrs = [Lconst.data.indptr]+Lptrs
        Lcoeff = ["1.0"]+Lcoeff
-       
+
     else:
         me_cops_obj_flags = [kk-1 for kk in me_cops_obj_flags]
     # the total number of liouvillian terms (hamiltonian terms +
     # collapse operators)
     n_L_terms = len(Ldata)
     n_td_cops = len(me_cops_obj)
-    
+
     # Check which components should use OPENMP
     omp_components = None
     if qset.has_openmp:
@@ -698,22 +699,22 @@ def _mesolve_list_str_td(H_list, rho0, tlist, c_list, e_ops, args, opt,
     string_list = []
     for k in range(n_L_terms):
         string_list.append("Ldata[%d], Linds[%d], Lptrs[%d]" % (k, k, k))
-    
+
     # Add H object terms to ode args string
     for k in range(len(Lobj)):
         string_list.append("Lobj[%d]" % k)
-        
+
     # Add cop object terms to end of ode args string
     for k in range(len(me_cops_obj)):
-        string_list.append("me_cops_obj[%d]" % k)    
-    
+        string_list.append("me_cops_obj[%d]" % k)
+
     for name, value in args.items():
         if isinstance(value, np.ndarray):
             string_list.append(name)
         else:
             string_list.append(str(value))
     parameter_string = ",".join(string_list)
-    
+
     #
     # generate and compile new cython code if necessary
     #
@@ -722,8 +723,8 @@ def _mesolve_list_str_td(H_list, rho0, tlist, c_list, e_ops, args, opt,
             config.tdname = "rhs" + str(os.getpid()) + str(config.cgen_num)
         else:
             config.tdname = opt.rhs_filename
-        cgen = Codegen(h_terms=len(Lcoeff), h_tdterms=Lcoeff, 
-                       c_td_splines=me_cops_coeff, 
+        cgen = Codegen(h_terms=len(Lcoeff), h_tdterms=Lcoeff,
+                       c_td_splines=me_cops_coeff,
                        c_td_spline_flags=me_cops_obj_flags, args=args,
                        config=config, use_openmp=opt.use_openmp,
                        omp_components=omp_components,
@@ -802,7 +803,7 @@ def _mesolve_const(H, rho0, tlist, c_op_list, e_ops, args, opt,
         H = H.tidyup(opt.atol)
 
     L = liouvillian(H, c_op_list)
-    
+
 
     #
     # setup integrator
@@ -814,7 +815,7 @@ def _mesolve_const(H, rho0, tlist, c_op_list, e_ops, args, opt,
     else:
         if opt.use_openmp and L.data.nnz >= qset.openmp_thresh:
             r = scipy.integrate.ode(cy_ode_rhs_openmp)
-            r.set_f_params(L.data.data, L.data.indices, L.data.indptr, 
+            r.set_f_params(L.data.data, L.data.indices, L.data.indptr,
                             opt.openmp_threads)
         else:
             r = scipy.integrate.ode(cy_ode_rhs)
@@ -961,7 +962,7 @@ def _ode_rho_func_td_with_state(t, rho, L0, L_func, args):
     return L * rho
 
 #
-# evaluate dE(t)/dt according to the master equation, where E is a 
+# evaluate dE(t)/dt according to the master equation, where E is a
 # superoperator
 #
 def _ode_super_func_td(t, y, L0, L_func, args):
@@ -969,7 +970,7 @@ def _ode_super_func_td(t, y, L0, L_func, args):
     return _ode_super_func(t, y, L)
 
 #
-# evaluate dE(t)/dt according to the master equation, where E is a 
+# evaluate dE(t)/dt according to the master equation, where E is a
 # superoperator
 #
 def _ode_super_func_td_with_state(t, y, L0, L_func, args):
@@ -1291,3 +1292,111 @@ def odesolve(H, rho0, tlist, c_op_list, e_ops, args=None, options=None):
         return output.expect
     else:
         return output.states
+
+
+class MESolver(DynamicsSolver):
+    """
+    Solver for unitary quantum dynamics.
+    Solves Schrodinger equation for both states and operators
+
+    Parameters
+    ----------
+    H : :class: qutip.Qobj
+        Hamiltonian dynamics generator
+        Could be single operator
+        Or callback function
+        Or string format time-dependent operator(s)
+
+    Attributes
+    ----------
+    H : :class: qutip.Qobj
+        Hamiltonian dynamics generator
+        Could be single operator
+        Or callback function
+        Or string format time-dependent operator(s)
+
+    Methods
+    -------
+    run()
+        Run the solver as it is currently configured or with given parameters
+
+    """
+
+    def __init__(self, dyn_gen, initial=None, tlist=None, c_ops=[], e_ops=[],
+                 args={}, options=None, progress_bar=None):
+        DynamicsSolver.__init__(self, dyn_gen, initial=initial, tlist=tlist,
+                                e_ops=e_ops, args=args, options=options,
+                                progress_bar=progress_bar)
+        self.c_ops = c_ops
+
+    def run(self, dyn_gen=None, initial=None, tlist=None,
+            c_ops=None, e_ops=None,
+            args=None, options=None, progress_bar=None, _safe_mode=True):
+        """
+        Run the solver with the given parameters or those defined for the
+        object where they are not given.
+
+        Parameters
+        ----------
+        dyn_gen : :class: qutip.Qobj
+            Dynamics generator
+            Could be Hamiltonian or Lindblad operator
+            Or callback function
+            Or string format time-dependent operator(s)
+
+        initial : :class: qutip.Qobj
+            Initial state or operator
+
+        tlist : array_like
+            times for :math:`t` for which results will be generated
+
+        e_ops : list of :class:`qutip.qobj` or callback function single
+            single operator or list of operators for which to evaluate
+            expectation values.
+            Ignored in operator evolution
+
+        options : :class: qutip.solver.Options
+            Options for the ODE solver
+
+        progress_bar : qutip.BaseProgressBar
+            Optional instance of BaseProgressBar, or a subclass thereof, for
+            showing the progress of the simulation.
+
+        Returns
+        -------
+        result: :class:`qutip.solver.Result`
+            Result object which contains either
+            Expectation values for the state, or
+            the state / operator at each of the times in tlist
+        """
+
+        if dyn_gen is None:
+            dyn_gen = self.dyn_gen
+
+        if initial is None:
+            initial = self.initial
+
+        if tlist is None:
+            tlist = self.tlist
+
+        if c_ops is None:
+            c_ops = self.c_ops
+
+        if e_ops is None:
+            e_ops = self.e_ops
+
+        if args is None:
+            args = self.args
+
+        if options is None:
+            options = self.options
+
+        if progress_bar is None:
+            progress_bar = self.progress_bar
+
+        self.result = mesolve(dyn_gen, initial, tlist,
+                              c_ops=c_ops, e_ops=e_ops,
+                              args=args, options=options,
+                              progress_bar=progress_bar, _safe_mode=_safe_mode)
+
+        return self.result
