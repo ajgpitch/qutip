@@ -696,10 +696,8 @@ class ControlSolverPWC(ControlSolver):
         if j >= 0:
             # Ctrl not drift
             T = self.tslot_time[-1]
-            amp_str = "0 if (t >= {}) else {}[int({} * (t/{}))]".format(
-                        T, 'ctrlamps', self._num_tslots, T)
-#            amp_str = "0 if (t >= {}) else {}[int({} * (t/{})), {}]".format(
-#                        T, 'ctrlamps', self._num_tslots, T, j)
+            amp_str = "0 if (t >= {}) else {}[int({}*(t/{}))*{} + {}]".format(
+                        T, 'ctrlamps', self._num_tslots, T, self._num_ctrls, j)
             if dg_coeff is not None:
                 dg_coeff = "({}*{})".format(amp_str, dg_coeff)
             else:
