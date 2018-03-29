@@ -54,6 +54,8 @@ import qutip.logging_utils as logging
 logger = logging.get_logger()
 # QuTiP Control
 import qutip.qoc.cost as qoccost
+from qutip.qoc.exception import (Incompatible, IncompatibleQobjType,
+                                 IncompatibleQobjDims)
 
 def _is_string(var):
     try:
@@ -92,10 +94,10 @@ class ControlSolver(object):
             raise TypeError("Invalid type {} for 'cost_meter'. Must be of type "
                             "{}".format(type(cost_meter), qoccost.CostMeter))
         self.cost_meter = cost_meter
-        self.initial = self._check_initial(initial)
-        self.target = self._check_target(target)
-        self.drift_dyn_gen = self._check_drift(drift_dyn_gen)
-        self.ctrl_dyn_gen = self._check_ctrls(ctrl_dyn_gen)
+        self._initial = self._check_initial(initial)
+        self._target = self._check_target(target)
+        self._drift_dyn_gen = self._check_drift(drift_dyn_gen)
+        self._ctrl_dyn_gen = self._check_ctrls(ctrl_dyn_gen)
 
     def __del__(self):
         if self.integ_rhs_tidyup:
@@ -109,17 +111,20 @@ class ControlSolver(object):
         rhs_clear()
 
     def reset(self):
+        # TODO: Use setters
         self.evo_solver = None
         self.cost_meter = None
-        self.drift_dyn_gen = None
-        self.ctrl_dyn_gen = None
-        self.initial = None
-        self.target = None
+        self._initial = None
+        self._target = None
+        self._drift_dyn_gen = None
+        self._ctrl_dyn_gen = None
         self.clear()
 
         self._initialized = False
         self._num_ctrls = 0
         self._dyn_gen_dims = None
+        self._evo_dims = None
+        self._evo_super = False
 
         self.integ_rhs_reuse = True
         self.integ_rhs_tidyup = True
@@ -166,6 +171,38 @@ class ControlSolver(object):
     def ctrls_initialized(self):
         return self._ctrls_initialized
 
+    @property
+    def initial(self):
+        return self._initial
+
+    @initial.setter
+    def initial(self, q):
+        self._initial = self._check_initial(q)
+
+    @property
+    def target(self):
+        return self._target
+
+    @target.setter
+    def target(self, q):
+        self._target = self._check_target(q)
+
+    @property
+    def drift_dyn_gen(self):
+        return self._drift_dyn_gen
+
+    @drift_dyn_gen.setter
+    def drift_dyn_gen(self, q):
+        self._drift_dyn_gen = self._check_drift(q)
+
+    @property
+    def ctrl_dyn_gen(self):
+        return self._ctrl_dyn_gen
+
+    @ctrl_dyn_gen.setter
+    def ctrl_dyn_gen(self, q):
+        self._ctrl_dyn_gen = self._check_ctrls(q)
+
 #    @property
 #    def drift_dyn_gen(self):
 #        """Drift or 'system' dynamics generator, e.g Hamiltonian"""
@@ -193,46 +230,36 @@ class ControlSolver(object):
         # time dependent ctrls
         return self.ctrl_dyn_gen[j]
 
-    def _check_initial(self, initial=None):
+    def _check_initial(self, initial=None, incompat_except=False):
         # In separate function, as may be overridden
         desc = 'parameter'
         if initial is None:
-            initial = self.initial
+            initial = self._initial
             desc = 'attribute'
 
         if not isinstance(initial, Qobj):
             raise TypeError("Invalid type {} for {} 'initial'. "
                             "Must be of type {}.".format(type(initial),
                                                         desc, Qobj))
-        self._dyn_gen_dims = [initial.dims[0], initial.dims[0]]
+
+        try:
+            self._check_evo_qobj(initial, "{} {}".format(desc, 'initial'),
+                                 self._target, 'attribute target')
+        except Incompatible as e:
+            if incompat_except:
+                raise e
+            else:
+                logger.warning(e)
+
+        self._evo_dims = initial.dims
         return initial
 
-    def _check_dg(self, dg, name, dims=None):
-        self._check_dg_oper(dg, name, dims)
-
-    def _check_dg_oper(self, dg, name, dims=None):
-        """Check dynamics generator operator"""
-
-        if not isinstance(dg, Qobj):
-            raise TypeError("Invalid type {} for {}. "
-                            "Must be of type {}.".format(type(dg),
-                                                        name, Qobj))
-        if not dg.isoper:
-            raise TypeError("Invalid Qobj type {} for {}. "
-                            "Must be 'oper' or 'super'.".format(dg.type, name))
-
-        if dims is not None:
-            if dg.dims != dims:
-                raise ValueError("Invalid dims {} for {}. "
-                                "Must be compatible with initial oper / state "
-                                "dims {}.".format(dg.dims, name, dims))
-
-    def _check_target(self, target=None):
+    def _check_target(self, target=None, incompat_except=False):
         # In separate function, as may be overridden
         # Assumes initial has already been checked (and set)
         desc = 'parameter'
         if target is None:
-            target = self.target
+            target = self._target
             desc = 'attribute'
 
         if not isinstance(target, Qobj):
@@ -240,22 +267,104 @@ class ControlSolver(object):
                             "Must be of type {}.".format(type(target),
                                                         desc, Qobj))
 
-        if target.dims != self.initial.dims:
-            raise TypeError("Incompatible Qobj dimensions "
-                            "for 'initial' and 'target'")
+        try:
+            self._check_evo_qobj(target, "{} {}".format(desc, 'target'),
+                                 self._initial, 'attribute initial')
+        except Incompatible as e:
+            if incompat_except:
+                raise e
+            else:
+                logger.warning(e)
+
         return target
 
-    def _check_drift(self, drift_dyn_gen=None):
+    def _check_evo_qobj(self, q, desc, q_pair=None, pair_desc=None):
+        if not q.type in ['ket', 'operator-ket', 'oper', 'super']:
+            raise TypeError("Invalid Qobj type {} for {} 'initial'. "
+                            "Must be 'ket', 'operator-ket', 'oper' or "
+                            "'super'.".format(type(q), desc, Qobj))
+
+        if isinstance(q_pair, Qobj):
+            if q.type != q_pair.type:
+                raise IncompatibleQobjType(
+                                "Incompatible Qobj type '{}' for {}. "
+                                "Must match {} '{}'".format(q.type, desc,
+                                                    pair_desc, q_pair.type))
+            if q.dims != q_pair.dims:
+                raise IncompatibleQobjDims("{} dims {} must match {} dims {}"
+                            ".".format(desc, q.dims, pair_desc, q_pair.dims))
+
+    def _check_dg(self, dg, name):
+        self._check_dg_oper(dg, name)
+
+    def _check_dg_oper(self, dg, name):
+        """Check dynamics generator operator"""
+
+        if not isinstance(dg, Qobj):
+            raise TypeError("Invalid type '{}' for {}. "
+                            "Must be of type {}.".format(type(dg),
+                                                        name, Qobj))
+        if not dg.type in ['oper', 'super']:
+            raise IncompatibleQobjType("Invalid Qobj type '{}' for {}. "
+                            "Must be 'oper' or 'super'.".format(dg.type, name))
+
+        if self.initial is not None:
+            self._check_dg_evo_compat(dg, name)
+
+    def _check_dg_evo_compat(self, dg, name):
+        compat = None
+        reason = 'incompatible dims'
+        # dg could be operator or super,
+        # the evo state / operator could be ket, oper or operator-ket
+        # It is possible that the solver could deal with all these combinations
+        # but maybe not, it's then up to the solver to report what it cannot
+        # work with.
+        ed = self._evo_dims
+        if dg.issuper:
+            if self.initial.isoperket or self.initial.issuper:
+                compat = [ed[0], ed[0]] == dg.dims
+            elif self.initial.isket or self.initial.isoper:
+                compat = [[ed[0], ed[0]], [ed[0], ed[0]]] == dg.dims
+            else:
+                reason = 'incompatible qobj types'
+        elif dg.isoper:
+            if self.initial.isoperket or self.initial.issuper:
+                compat = ed[0] == dg.dims
+            elif self.initial.isket or self.initial.isoper:
+                compat = [ed[0], ed[0]] == dg.dims
+            else:
+                reason = 'incompatible qobj types'
+        else:
+            reason = "invalid qobj type '{}' for {}".format(dg.type, name)
+
+        if compat is None:
+            raise IncompatibleQobjType("{} is not compatible with initial "
+                                       "oper / state due to {}"
+                                       ".".format(name, reason))
+        else:
+            if not compat:
+                raise IncompatibleQobjDims(
+                        "{} dims {} are not compatible with initial "
+                        "oper / state dims {}.".format(name, dg.dims, ed))
+
+    def _check_drift(self, drift_dyn_gen=None, incompat_except=False):
         # In separate function, as may be overridden
         # Assumes initial has already been checked
         desc = 'parameter'
         if drift_dyn_gen is None:
-            drift_dyn_gen = self.drift_dyn_gen
+            drift_dyn_gen = self._drift_dyn_gen
             desc = 'attribute'
 
-        self._check_dg(drift_dyn_gen,
-                            "{} '{}'".format(desc, 'drift_dyn_gen'),
-                            dims=self._dyn_gen_dims)
+        try:
+            self._check_dg(drift_dyn_gen,
+                                "{} '{}'".format(desc, 'drift_dyn_gen'),
+                                dims=self._dyn_gen_dims)
+        except Incompatible as e:
+            if incompat_except:
+                raise e
+            else:
+                logger.warning(e)
+
 
         # This check is not valid for all evo_solvers
         # Should be moved to the evo_solver
@@ -264,12 +373,12 @@ class ControlSolver(object):
 #                                        "for 'drift_dyn_gen' and 'initial'")
         return drift_dyn_gen
 
-    def _check_ctrls(self, ctrl_dyn_gen=None):
+    def _check_ctrls(self, ctrl_dyn_gen=None,  incompat_except=False):
         # In separate function, as may be overridden
         # Assumes that _check_drift has already been called
         desc = 'parameter'
         if ctrl_dyn_gen is None:
-            ctrl_dyn_gen = self.ctrl_dyn_gen
+            ctrl_dyn_gen = self._ctrl_dyn_gen
             desc = 'attribute'
 
         if self._get_num_ctrls(ctrl_dyn_gen) == 0:
@@ -277,9 +386,16 @@ class ControlSolver(object):
                             "be iterable.".format(type(ctrl_dyn_gen), desc))
         else:
             for j, ctrl in enumerate(ctrl_dyn_gen):
-                self._check_dg(ctrl,
+                try:
+                    self._check_dg(ctrl,
                                "{} '{}[{}]'".format(desc, 'ctrl_dyn_gen', j),
                                dims=self._dyn_gen_dims)
+                except Incompatible as e:
+                    if incompat_except:
+                        raise e
+                    else:
+                        logger.warning(e)
+
         return ctrl_dyn_gen
 
     def init_solve(self):
@@ -288,11 +404,11 @@ class ControlSolver(object):
         Check all the attribute types and dimensional compatibility
         """
 
-        self._check_initial()
-        self._check_drift()
+        self._check_target(incompat_except=True)
+        self._check_initial(incompat_except=True)
         self.cost_meter.init_normalization(self)
-        self._check_drift()
-        self._check_ctrls()
+        self._check_drift(incompat_except=True)
+        self._check_ctrls(incompat_except=True)
 
         # self._initialized not set here, as only considered initialised
         # when subclass init_solve has been called
@@ -478,7 +594,7 @@ class ControlSolverPWC(ControlSolver):
 
         if isinstance(dg, Qobj):
             # No time dependance
-            self._check_dg_oper(dg, name, dims)
+            self._check_dg_oper(dg, name)
         elif isinstance(dg, list):
             if len(dg) != 2:
                 raise TypeError("Invalid td format for {}".format(name))
