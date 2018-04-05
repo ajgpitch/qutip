@@ -111,6 +111,7 @@ class ControlSolver(object):
         rhs_clear()
 
     def reset(self):
+        # These are set by the user
         # TODO: Use setters
         self.evo_solver = None
         self.cost_meter = None
@@ -118,8 +119,11 @@ class ControlSolver(object):
         self._target = None
         self._drift_dyn_gen = None
         self._ctrl_dyn_gen = None
+        self.amp_lbound = None
+        self.amp_ubound = None
         self.clear()
 
+        # These are set internally
         self._initialized = False
         self._num_ctrls = 0
         self._dyn_gen_dims = None
@@ -202,11 +206,6 @@ class ControlSolver(object):
     @ctrl_dyn_gen.setter
     def ctrl_dyn_gen(self, q):
         self._ctrl_dyn_gen = self._check_ctrls(q)
-
-#    @property
-#    def drift_dyn_gen(self):
-#        """Drift or 'system' dynamics generator, e.g Hamiltonian"""
-#        return self._get_drift_dyn_gen()
 
     def _get_drift_dyn_gen(self):
         return self.drift_dyn_gen
