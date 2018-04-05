@@ -141,7 +141,6 @@ class Optimizer(object):
         self.reset()
         self.ctrl_solver = ctrl_solver
 
-
     def reset(self):
         self.log_level = 20
         self.stats = None
@@ -199,7 +198,7 @@ class Optimizer(object):
         self.ctrl_solver.init_solve()
 
         # self.apply_method_params()
-
+        self._build_bounds_list()
 
         self.approx_grad = True
         self.num_iter = 0
@@ -210,28 +209,40 @@ class Optimizer(object):
         if self.ctrl_solver.integ_rhs_tidyup:
             self.ctrl_solver.tidyup_integ_td()
 
-#    def _build_bounds_list(self):
-#        cfg = self.config
-#        dyn = self.dynamics
-#        n_ctrls = dyn.num_ctrls
-#        self.bounds = []
-#        for t in range(dyn.num_tslots):
-#            for c in range(n_ctrls):
-#                if isinstance(self.amp_lbound, list):
-#                    lb = self.amp_lbound[c]
-#                else:
-#                    lb = self.amp_lbound
-#                if isinstance(self.amp_ubound, list):
-#                    ub = self.amp_ubound[c]
-#                else:
-#                    ub = self.amp_ubound
-#
-#                if not lb is None and np.isinf(lb):
-#                    lb = None
-#                if not ub is None and np.isinf(ub):
-#                    ub = None
-#
-#                self.bounds.append((lb, ub))
+    def _build_bounds_list(self):
+        # This assumes that the ctrl_solver amp_lbound and amp_ubound
+        # have been checked to be either None, float or array_like
+        # and equal to the number of controls
+        csol = self.ctrl_solver
+        bounds = []
+        all_none = True
+        for k in range(csol.num_tslots):
+            for j in range(csol.num_ctrls):
+                if csol.amp_lbound is None:
+                    lb = None
+                else:
+                    if hasattr(csol.amp_lbound, 'len'):
+                        lb = csol.amp_lbound[j]
+                    else:
+                        lb = csol.amp_lbound
+
+                if csol.amp_ubound is None:
+                    ub = None
+                else:
+                    if hasattr(csol.amp_ubound, 'len'):
+                        ub = csol.amp_ubound[j]
+                    else:
+                        ub = csol.amp_ubound
+
+                if (lb is not None) or (ub is not None):
+                    all_none = False
+
+                bounds.append((lb, ub))
+
+        if all_none:
+            self.bounds = None
+        else:
+            self.bounds = bounds
 
     def optimize_ctrls(self):
         """
@@ -374,7 +385,7 @@ class Optimizer(object):
         if not self.ctrl_solver.is_solution_current:
             self.ctrl_solver.solve()
 
-        print("Cost {}".format(self.ctrl_solver.cost))
+        #print("Cost {}".format(self.ctrl_solver.cost))
 
         if self.result.initial_cost is None:
             # Assume this is the first solve

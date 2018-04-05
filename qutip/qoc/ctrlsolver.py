@@ -506,7 +506,7 @@ class ControlSolverPWC(ControlSolver):
                             "raised: {}".format(type(tlist), desc, e))
 
         end_time = tlist[-1]
-        if abs(end_time - self._get_total_time()) > qset.atol:
+        if not np.isclose(end_time, self._get_total_time(), atol=qset.atol):
             raise ValueError("Invalid end time {} for {} 'tlist'. "
                             "Must be equal to the timeslot total time "
                             "{}".format(end_time, desc, self._get_total_time()))
@@ -729,7 +729,7 @@ class ControlSolverPWC(ControlSolver):
 
         if self.solver_combines_dyn_gen:
             self.evo_solver.args['ctrlamps'] = self.ctrl_amps.flatten()
-            print("Amps: {}".format(self.ctrl_amps.flatten()))
+            #print("Amps: {}".format(self.ctrl_amps.flatten()))
         else:
             self._update_dyn_gen()
 
