@@ -584,6 +584,7 @@ class ControlSolverPWC(ControlSolver):
 
         if self.solver_combines_dyn_gen:
             self.evo_solver.dyn_gen = self._construct_td_dyn_gen()
+            # TODO: Check td_args - is this possible
         else:
             self._dyn_gen = [self._get_combined_dyn_gen(k)
                                 for k in range(self._num_tslots)]
@@ -690,8 +691,6 @@ class ControlSolverPWC(ControlSolver):
             # this should never happen, as should have been checked
             raise TypeError("Invalid type for ctrl "
                              "dynamics generator {}".format(j))
-
-        #TODO: support td drift here
         if j >= 0:
             # Ctrl not drift
             T = self.tslot_time[-1]
