@@ -473,7 +473,7 @@ class ControlSolverPWC(ControlSolver):
         if self._get_num_tslots(tslot_duration) == 0:
             raise ValueError("Invalid  {} 'tslot_duration'. Must define at "
                             "least one timeslot.".format(
-                                                    type(tslot_duration), desc))
+                                                   type(tslot_duration), desc))
 
         if self._get_total_time(tslot_duration) == 0.0:
             raise TypeError("total time cannot be zero")
@@ -485,6 +485,38 @@ class ControlSolverPWC(ControlSolver):
     @property
     def tslot_time(self):
         return self._tslot_time
+
+    def get_tslot_idx(self, t, safe=True):
+        """
+        Get the timeslot index for a given evolution time.
+
+        Raises
+        ------
+        RuntimeError
+            If tslot_time attribute is not set
+
+        Returns
+        -------
+        int
+            Index of time slot where t is less than evolution time at the end
+            of the timeslot.
+            If safe=False will be None if t is less than the start time or
+            greater than the end time
+        """
+        if self._tslot_time is None:
+            raise RuntimeError("tslot_time not set. Cannot use this method "
+                               "before init_solve")
+        # Otherwise assume that _tslot_time iscorrectly specified as
+        # a 1d float array
+        tst = self._tslot_time
+
+        if np.any(tst <= t) and np.any(tst >= t) or safe:
+            if t <= tst[1]:
+                return 0
+            else:
+                return np.where(tst < t)[0][-1]
+        else:
+            return None
 
 
     def _check_tlist(self, tlist=None):
@@ -693,6 +725,8 @@ class ControlSolverPWC(ControlSolver):
                              "dynamics generator {}".format(j))
         if j >= 0:
             # Ctrl not drift
+            # TODO: This assumes that timeslots are equally spaced
+            #       Will need to think of something more rigorous
             T = self.tslot_time[-1]
             amp_str = "0 if (t >= {}) else {}[int({}*(t/{}))*{} + {}]".format(
                         T, 'ctrlamps', self._num_tslots, T, self._num_ctrls, j)
