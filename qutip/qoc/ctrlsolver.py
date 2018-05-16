@@ -728,8 +728,11 @@ class ControlSolverPWC(ControlSolver):
             # TODO: This assumes that timeslots are equally spaced
             #       Will need to think of something more rigorous
             T = self.tslot_time[-1]
-            amp_str = "0 if (t >= {}) else {}[int({}*(t/{}))*{} + {}]".format(
-                        T, 'ctrlamps', self._num_tslots, T, self._num_ctrls, j)
+#            amp_str = "0 if (t >= {}) else {}[int({}*(t/{}))*{} + {}]".format(
+#                        T, 'ctrlamps', self._num_tslots, T, self._num_ctrls, j)
+            amp_str = "0 if (t >= {}) else {}[int({}*(t/{})), {}]".format(
+                        T, 'ctrlamps', self._num_tslots, T, j)
+
             if dg_coeff is not None:
                 dg_coeff = "({}*{})".format(amp_str, dg_coeff)
             else:
@@ -760,7 +763,7 @@ class ControlSolverPWC(ControlSolver):
             self.init_solve()
 
         if self.solver_combines_dyn_gen:
-            self.evo_solver.args['ctrlamps'] = self.ctrl_amps.flatten()
+            self.evo_solver.args['ctrlamps'] = self.ctrl_amps
             #print("Amps: {}".format(self.ctrl_amps.flatten()))
         else:
             self._update_dyn_gen()
