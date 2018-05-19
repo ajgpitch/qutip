@@ -482,7 +482,8 @@ def _sesolve_list_str_td(H_list, psi0, tlist, e_ops, args, opt,
         cgen = Codegen(h_terms=n_L_terms, h_tdterms=Lcoeff, args=args,
                        config=config, use_openmp=opt.use_openmp,
                        omp_components=omp_components,
-                       omp_threads=opt.openmp_threads)
+                       omp_threads=opt.openmp_threads,
+                       param_calc=opt.param_calc_lines)
         cgen.generate(config.tdname + ".pyx")
 
         code = compile('from ' + config.tdname + ' import cy_td_ode_rhs',

@@ -184,6 +184,9 @@ class Options():
         Number of trajectories in stochastic solvers.
     openmp_threads : int
         Number of OPENMP threads to use. Default is number of cpu cores.
+    ode_param_calc : list
+        Cython code lines to be added at the start of the rhs function.
+        These are intended for the calculation of any parameters.
     rhs_reuse : bool {False,True}
         Reuse Hamiltonian data.
     rhs_with_state : bool {False,True}
@@ -241,6 +244,7 @@ class Options():
         self.seeds = seeds
         # tidyup Hamiltonian before calculation (default = True)
         self.tidy = tidy
+        self.param_calc_lines = None
         # include the state in the function callback signature
         self.rhs_with_state = rhs_with_state
         # Use preexisting RHS function for time-dependent solvers
@@ -281,6 +285,13 @@ class Options():
             seed_length = 0
         else:
             seed_length = len(self.seeds)
+        if self.param_calc_lines is None:
+            pcl = 'None'
+        else:
+            try:
+                pcl = "{} lines".format(len(self.param_calc_lines))
+            except Exception as e:
+                pcl = str(e)
         s = ""
         s += "Options:\n"
         s += "-----------\n"
@@ -298,6 +309,7 @@ class Options():
         s += "norm_steps:        " + str(self.norm_steps) + "\n"
         s += "rhs_filename:      " + str(self.rhs_filename) + "\n"
         s += "rhs_reuse:         " + str(self.rhs_reuse) + "\n"
+        s += "param_calc_lines   " + pcl + "\n"
         s += "seeds:             " + str(seed_length) + "\n"
         s += "rhs_with_state:    " + str(self.rhs_with_state) + "\n"
         s += "average_expect:    " + str(self.average_expect) + "\n"

@@ -616,7 +616,7 @@ class ControlSolverPWC(ControlSolver):
 
         if self.solver_combines_dyn_gen:
             self.evo_solver.dyn_gen = self._construct_td_dyn_gen()
-            # TODO: Check td_args - is this possible
+            # TODO: Check td_args - is this possible?
         else:
             self._dyn_gen = [self._get_combined_dyn_gen(k)
                                 for k in range(self._num_tslots)]
@@ -666,6 +666,23 @@ class ControlSolverPWC(ControlSolver):
                                             rhs_reuse=self.integ_rhs_reuse)
             else:
                 self.evo_solver.options.rhs_reuse = self.integ_rhs_reuse
+
+            if self.solver_combines_dyn_gen:
+                # Add qoc pwc solver parameters
+                # These will be calculated
+                # timeslot index
+                self.evo_solver.args['qtrl_k'] = 0
+                self.evo_solver.args['qtrl_amp'] = np.array([self.num_tslots],
+                                                            dtype=np.float64)
+                self.evo_solver.args['qtrl_T'] = self.total_time
+                self.evo_solver.args['qtrl_nts'] = self.num_tslots
+                self.evo_solver.args['qtrl_nctrls'] = self.num_ctrls
+                self.evo_solver.options.param_calc_lines = [
+                    "cdef size_t j",
+                    "qtrl_k = min(int(qtrl_nts*t/qtrl_T), qtrl_nts - 1)",
+                    "for j in range(qtrl_nctrls):",
+                    "    qtrl_amp[j] = qtrl_tsctrlamp[qtrl_k, j]"
+                    ]
 
         self._initialized = True
 
@@ -727,11 +744,9 @@ class ControlSolverPWC(ControlSolver):
             # Ctrl not drift
             # TODO: This assumes that timeslots are equally spaced
             #       Will need to think of something more rigorous
-            T = self.tslot_time[-1]
 #            amp_str = "0 if (t >= {}) else {}[int({}*(t/{}))*{} + {}]".format(
 #                        T, 'ctrlamps', self._num_tslots, T, self._num_ctrls, j)
-            amp_str = "0 if (t >= {}) else {}[int({}*(t/{})), {}]".format(
-                        T, 'ctrlamps', self._num_tslots, T, j)
+            amp_str = "qtrl_amp[{}]".format(j)
 
             if dg_coeff is not None:
                 dg_coeff = "({}*{})".format(amp_str, dg_coeff)
@@ -763,7 +778,7 @@ class ControlSolverPWC(ControlSolver):
             self.init_solve()
 
         if self.solver_combines_dyn_gen:
-            self.evo_solver.args['ctrlamps'] = self.ctrl_amps
+            self.evo_solver.args['qtrl_tsctrlamp'] = self.ctrl_amps
             #print("Amps: {}".format(self.ctrl_amps.flatten()))
         else:
             self._update_dyn_gen()

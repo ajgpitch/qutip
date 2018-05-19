@@ -46,10 +46,14 @@ class Codegen():
                  args=None, c_terms=None, c_tdterms=[], c_td_inds=None,
                  c_td_splines=[], c_td_spline_flags=[],
                  type='me', config=None,
-                 use_openmp=False, omp_components=None, omp_threads=None):
+                 use_openmp=False, omp_components=None, omp_threads=None,
+                 param_calc=None):
         import sys
         import os
         sys.path.append(os.getcwd())
+
+        # parameter precalc lines
+        self.param_calc = param_calc
 
         # Hamiltonian time-depdendent pieces
         self.type = type
@@ -96,6 +100,7 @@ class Codegen():
         for line in cython_checks() + self.ODE_func_header():
             self.write(line)
         self.indent()
+
         for line in self.func_vars():
             self.write(line)
         self.write(self.func_end())
@@ -230,6 +235,12 @@ class Codegen():
                      "cdef double complex * " +
                      'out = <complex *>PyDataMem_NEW_ZEROED(num_rows,sizeof(complex))']
         func_vars.append(" ")
+
+        # parameter pre calc lines
+        if self.param_calc:
+            for l in self.param_calc:
+                func_vars.append(l)
+
         tdterms = self.h_tdterms
         hinds = 0
         spline = 0
