@@ -884,8 +884,46 @@ class _StatsSection(object):
         self.messages.clear()
         self.total_time = None
 
+class IntegrationEvent(object):
+    """
+    Specifies what should happen at a given time during the solver integration
 
+    Attributes
+    ----------
+    time : float
+        Time in the evolution
 
+    store_state : bool
+        State will be saved for this event if True
+
+    expect : bool
+        Expectation values will be saved for this event if True
+
+    update_params : bool
+        Solver parameters will be updated for this event if True
+    """
+    def __init__(self, time, store_state=False, expect=False,
+                 update_params=False):
+        self.time = time
+        self.store_state = store_state
+        self.expect = expect
+        self.update_params = update_params
+
+def add_integ_events(tlist, event_list=[],
+                     store_state=None, expect=None, update_params=None,
+                     atol=qset.atol):
+    """Add integration events to new or existing list with the given event
+    attributes.
+    If an event already exists at a particular time then the properties of
+    the existing event are update where the corresponding parameter is not
+    None
+
+    Parameters
+    ----------
+    tlist : array_like(dtype=float, ndim=1)
+       List of times to at which add / update events
+
+    """
 
 def _solver_safety_check(H, state=None, c_ops=[], e_ops=[], args={}):
     # Input is std Qobj (Hamiltonian or Liouvillian)
