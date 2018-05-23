@@ -70,7 +70,7 @@ if debug:
 
 
 def sesolve(H, psi0, tlist, e_ops=[], args={}, options=None,
-            progress_bar=None, _safe_mode=True):
+            progress_bar=None, _safe_mode=True, integ_events=None):
     """
     Schrodinger equation evolution of a state vector or unitary matrix
     for a given Hamiltonian.
@@ -115,6 +115,18 @@ def sesolve(H, psi0, tlist, e_ops=[], args={}, options=None,
     progress_bar : BaseProgressBar
         Optional instance of BaseProgressBar, or a subclass thereof, for
         showing the progress of the simulation.
+
+    integ_events : list of :class:`solver.IntegrationEvent`
+        Events during the ODE integration where some action is to be taken.
+        If this is not passed, then it is generated from tlist.
+        It can be created using solver.add_integ_events
+
+    update_args_func : Function
+        Callback function for updating the time dependence args.
+        It will be called whenever an IntegrationEvent has
+        `update_params=True`.
+        It should take parameters `t, args` and should return a dictionary
+        of args that have been updated.
 
     Returns
     -------

@@ -32,7 +32,8 @@
 ###############################################################################
 from __future__ import print_function
 
-__all__ = ['Options', 'Odeoptions', 'Odedata']
+__all__ = ['Options', 'Odeoptions', 'Odedata',
+           'Stats', 'IntegrationEvent', 'add_integ_events']
 
 import sys
 import datetime
@@ -910,21 +911,23 @@ class IntegrationEvent(object):
         self.update_params = update_params
 
     def __str__(self):
-        s = "IntegrationEvent: t={}. ".format(self.time)
+        action_list = []
         if self.store_state or self.expect or self.update_params:
             if self.store_state:
-                s += "store_state, "
+                action_list.append("store_state")
             if self.expect:
-                s += "expect, "
+                action_list.append("expect")
             if self.update_params:
-                s += "update_params."
+                action_list.append("update_params")
+        if len(action_list) == 0:
+            actions = "NO ACTIONS!"
         else:
-            s += "NO ACTIONS!"
-        return s
+            actions = ", ".join(action_list)
+        return "IntegrationEvent: t={}, {}".format(self.time, actions)
 
 def add_integ_events(tlist, event_list=[],
                      store_state=None, expect=None, update_params=None,
-                     atol=qset.atol):
+                     rtol=0.0, atol=qset.atol):
     """Add integration events to new or existing list with the given event
     attributes.
     If an event already exists at a particular time then the properties of
@@ -951,9 +954,14 @@ def add_integ_events(tlist, event_list=[],
         New events will be added with attribute set to this value.
         Concurrent events will have their attribute updated
 
+    rtol : float
+        Relative tolerence for time comparison.
+        Used to determine if events are concurrent.
+
     atol : float
-        Used to determine if events are coincident.
-        Uses the default from qutip settings unless passed specific value.
+        Absolute tolerence for time comparison.
+        Used to determine if events are concurrent.
+        Uses the default from qutip settings unless passed a specific value.
 
     Returns
     -------
@@ -967,12 +975,13 @@ def add_integ_events(tlist, event_list=[],
 
         If tlist cannot be converted to a float array.
 
-    TypeError
-        If event_list contains items that are not :class:`IntegrationEvent`
+        If tlist is not monotonically increasing
 
-    RuntimeError
         If consecutive event or tlist times are found to be concurrent,
         by numpy `isclose` using the atol parameter
+
+    TypeError
+        If event_list contains items that are not :class:`IntegrationEvent`
 
     """
     if store_state is None and expect is None and update_params is None:
@@ -997,32 +1006,43 @@ def add_integ_events(tlist, event_list=[],
     i = 0 # event index
     t_prev = np.NaN
     for k, t in enumerate(tlist):
-        if np.isclose(t, t_prev, atol=atol):
-            raise RuntimeError(concur_msg.format('times', k-1, k, 'tlist'))
+        if t <= t_prev:
+            raise ValueError("tlist must monotonically increase.")
+        if np.isclose(t, t_prev, rtol=rtol, atol=atol):
+            raise ValueError(concur_msg.format('times', k-1, k, 'tlist'))
+
         event_updated = False
         if i < len(event_list):
-            e = event_list[i]
             while True:
-                if np.isclose(t, e.time, atol=atol):
+                e = event_list[i]
+                if np.isclose(t, e.time, rtol=rtol, atol=atol):
                     # concurrent event - update
                     update_event(e)
                     i += 1
                     # Check next event is not concurrent
                     if i < len(event_list):
-                        if np.isclose(t, event_list[i].time, atol=atol):
-                            raise RuntimeError(concur_msg.format(
+                        if np.isclose(t, event_list[i].time,
+                                      rtol=rtol, atol=atol):
+                            raise ValueError(concur_msg.format(
                                     'events', i-1, i, 'event_list'))
                     event_updated = True
+                    break
                 if e.time < t:
                     i += 1
-                    continue
+                    if i < len(event_list):
+                        continue
+                    else:
+                        break
                 else:
                     break
+
         if not event_updated:
             e = IntegrationEvent(t)
             update_event(e)
             event_list.insert(i, e)
             i += 1
+
+        t_prev = t
 
     return event_list
 
