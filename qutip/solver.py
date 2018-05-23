@@ -909,6 +909,19 @@ class IntegrationEvent(object):
         self.expect = expect
         self.update_params = update_params
 
+    def __str__(self):
+        s = "IntegrationEvent: t={}. ".format(self.time)
+        if self.store_state or self.expect or self.update_params:
+            if self.store_state:
+                s += "store_state, "
+            if self.expect:
+                s += "expect, "
+            if self.update_params:
+                s += "update_params."
+        else:
+            s += "NO ACTIONS!"
+        return s
+
 def add_integ_events(tlist, event_list=[],
                      store_state=None, expect=None, update_params=None,
                      atol=qset.atol):
@@ -921,9 +934,97 @@ def add_integ_events(tlist, event_list=[],
     Parameters
     ----------
     tlist : array_like(dtype=float, ndim=1)
-       List of times to at which add / update events
+        List of times to at which add / update events
+
+    event_list : list of :class:`IntegrationEvent`
+        List of existing events to add to.
+
+    store_state : bool
+        New events will be added with attribute set to this value.
+        Concurrent events will have their attribute updated
+
+    expect : bool
+        New events will be added with attribute set to this value.
+        Concurrent events will have their attribute updated
+
+    update_params : bool
+        New events will be added with attribute set to this value.
+        Concurrent events will have their attribute updated
+
+    atol : float
+        Used to determine if events are coincident.
+        Uses the default from qutip settings unless passed specific value.
+
+    Returns
+    -------
+    event_list : list of :class:`IntegrationEvent`
+        The list with the new events added and or existing events updated
+
+    Raises
+    ------
+    ValueError
+        If all the event attributes are passed as None.
+
+        If tlist cannot be converted to a float array.
+
+    TypeError
+        If event_list contains items that are not :class:`IntegrationEvent`
+
+    RuntimeError
+        If consecutive event or tlist times are found to be concurrent,
+        by numpy `isclose` using the atol parameter
 
     """
+    if store_state is None and expect is None and update_params is None:
+        raise ValueError("At least one event attribute must not be None")
+
+    def update_event(e):
+        if store_state is not None:
+            e.store_state = store_state
+        if expect is not None:
+            e.expect = expect
+        if update_params is not None:
+            e.update_params = update_params
+
+    try:
+        tlist = np.asfarray(tlist)
+    except ValueError as e:
+        raise ValueError("tlist must be float array_like. " + e)
+
+    concur_msg = ("Consecutive {} ({} & {}) in {} are found to be concurrent. "
+                  "Suggests time resolution greater than atol")
+
+    i = 0 # event index
+    t_prev = np.NaN
+    for k, t in enumerate(tlist):
+        if np.isclose(t, t_prev, atol=atol):
+            raise RuntimeError(concur_msg.format('times', k-1, k, 'tlist'))
+        event_updated = False
+        if i < len(event_list):
+            e = event_list[i]
+            while True:
+                if np.isclose(t, e.time, atol=atol):
+                    # concurrent event - update
+                    update_event(e)
+                    i += 1
+                    # Check next event is not concurrent
+                    if i < len(event_list):
+                        if np.isclose(t, event_list[i].time, atol=atol):
+                            raise RuntimeError(concur_msg.format(
+                                    'events', i-1, i, 'event_list'))
+                    event_updated = True
+                if e.time < t:
+                    i += 1
+                    continue
+                else:
+                    break
+        if not event_updated:
+            e = IntegrationEvent(t)
+            update_event(e)
+            event_list.insert(i, e)
+            i += 1
+
+    return event_list
 
 def _solver_safety_check(H, state=None, c_ops=[], e_ops=[], args={}):
     # Input is std Qobj (Hamiltonian or Liouvillian)
