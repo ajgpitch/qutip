@@ -47,11 +47,13 @@ class Codegen():
                  c_td_splines=[], c_td_spline_flags=[],
                  type='me', config=None,
                  use_openmp=False, omp_components=None, omp_threads=None,
-                 param_calc=None):
+                 td_globals=None, param_calc=None):
         import sys
         import os
         sys.path.append(os.getcwd())
 
+        # Dictionary of globals
+        self.td_globals = td_globals
         # parameter precalc lines
         self.param_calc = param_calc
 
@@ -140,25 +142,36 @@ class Codegen():
             raise SyntaxError("Error in code generator")
         self.level -= 1
 
+    def _get_declare(self, name, value):
+
+        if isinstance(value, np.ndarray):
+            ret = ",\n        np.ndarray[np.%s_t, ndim=%d] %s" % \
+                (value.dtype.name, len(value.shape), name)
+        else:
+            if isinstance(value, (int, np.int32, np.int64)):
+                kind = 'int'
+            elif isinstance(value, (float, np.float32, np.float64)):
+                kind = 'float'
+            elif isinstance(value, (complex, np.complex128)):
+                kind = 'complex'
+            #kind = type(value).__name__
+            ret = ",\n        " + kind + " " + name
+        return ret
+
     def _get_arg_str(self, args):
         if len(args) == 0:
             return ''
 
         ret = ''
-        for name, value in self.args.items():
-            if isinstance(value, np.ndarray):
-                ret += ",\n        np.ndarray[np.%s_t, ndim=%d] %s" % \
-                    (value.dtype.name, len(value.shape), name)
-            else:
-                if isinstance(value, (int, np.int32, np.int64)):
-                    kind = 'int'
-                elif isinstance(value, (float, np.float32, np.float64)):
-                    kind = 'float'
-                elif isinstance(value, (complex, np.complex128)):
-                    kind = 'complex'
-                #kind = type(value).__name__
-                ret += ",\n        " + kind + " " + name
+        for name, value in args.items():
+            ret += ",\n        " + self._get_declare(name, value)
         return ret
+
+    def global_declare(self, td_globals):
+        lines = []
+        for name, value in td_globals.items():
+            lines.append(self._get_declare(name, value))
+        return lines
 
     def ODE_func_header(self):
         """Creates function header for time-dependent ODE RHS."""
