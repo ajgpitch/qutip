@@ -286,13 +286,6 @@ class Options():
             seed_length = 0
         else:
             seed_length = len(self.seeds)
-        if self.param_calc_lines is None:
-            pcl = 'None'
-        else:
-            try:
-                pcl = "{} lines".format(len(self.param_calc_lines))
-            except Exception as e:
-                pcl = str(e)
         s = ""
         s += "Options:\n"
         s += "-----------\n"
@@ -310,7 +303,6 @@ class Options():
         s += "norm_steps:        " + str(self.norm_steps) + "\n"
         s += "rhs_filename:      " + str(self.rhs_filename) + "\n"
         s += "rhs_reuse:         " + str(self.rhs_reuse) + "\n"
-        s += "param_calc_lines   " + pcl + "\n"
         s += "seeds:             " + str(seed_length) + "\n"
         s += "rhs_with_state:    " + str(self.rhs_with_state) + "\n"
         s += "average_expect:    " + str(self.average_expect) + "\n"
