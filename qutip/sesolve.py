@@ -70,7 +70,7 @@ if debug:
 
 
 def sesolve(H, psi0, tlist, e_ops=[], args={}, options=None,
-            progress_bar=None, _safe_mode=True, integ_events=None):
+            progress_bar=None, _safe_mode=True, cgen=None):
     """
     Schrodinger equation evolution of a state vector or unitary matrix
     for a given Hamiltonian.
@@ -116,18 +116,6 @@ def sesolve(H, psi0, tlist, e_ops=[], args={}, options=None,
         Optional instance of BaseProgressBar, or a subclass thereof, for
         showing the progress of the simulation.
 
-    integ_events : list of :class:`solver.IntegrationEvent`
-        Events during the ODE integration where some action is to be taken.
-        If this is not passed, then it is generated from tlist.
-        It can be created using solver.add_integ_events
-
-    update_args_func : Function
-        Callback function for updating the time dependence args.
-        It will be called whenever an IntegrationEvent has
-        `update_params=True`.
-        It should take parameters `t, args` and should return a dictionary
-        of args that have been updated.
-
     Returns
     -------
 
@@ -141,9 +129,9 @@ def sesolve(H, psi0, tlist, e_ops=[], args={}, options=None,
         which to calculate the expectation values.
 
     """
+    #TODO qoc:  doc cgen
+
     # check initial state: must be a state vector
-
-
     if _safe_mode:
         if not isinstance(psi0, Qobj):
             raise TypeError("psi0 must be Qobj")
@@ -195,7 +183,7 @@ def sesolve(H, psi0, tlist, e_ops=[], args={}, options=None,
 
     elif n_str > 0:
         res = _sesolve_list_str_td(H, psi0, tlist, e_ops, args, options,
-                                   progress_bar)
+                                   progress_bar, td_globals)
 
     elif isinstance(H, (types.FunctionType,
                         types.BuiltinFunctionType,
@@ -402,7 +390,7 @@ def _ode_psi_func(t, psi, H):
 # cython compilation
 #
 def _sesolve_list_str_td(H_list, psi0, tlist, e_ops, args, opt,
-                         progress_bar):
+                         progress_bar, cgen=None):
     """
     Internal function for solving the master equation. See mesolve for usage.
     """
@@ -491,11 +479,11 @@ def _sesolve_list_str_td(H_list, psi0, tlist, e_ops, args, opt,
             config.tdname = "rhs" + str(os.getpid()) + str(config.cgen_num)
         else:
             config.tdname = opt.rhs_filename
-        cgen = Codegen(h_terms=n_L_terms, h_tdterms=Lcoeff, args=args,
-                       config=config, use_openmp=opt.use_openmp,
-                       omp_components=omp_components,
-                       omp_threads=opt.openmp_threads,
-                       param_calc=opt.param_calc_lines)
+        if cgen is None:
+            cgen = Codegen(h_terms=n_L_terms, h_tdterms=Lcoeff, args=args,
+                           config=config, use_openmp=opt.use_openmp,
+                           omp_components=omp_components,
+                           omp_threads=opt.openmp_threads)
         cgen.generate(config.tdname + ".pyx")
 
         code = compile('from ' + config.tdname + ' import cy_td_ode_rhs',
