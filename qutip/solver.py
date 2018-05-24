@@ -32,8 +32,7 @@
 ###############################################################################
 from __future__ import print_function
 
-__all__ = ['Options', 'Odeoptions', 'Odedata',
-           'Stats', 'IntegrationEvent', 'add_integ_events']
+__all__ = ['Options', 'Odeoptions', 'Odedata', 'Stats']
 
 import sys
 import datetime
