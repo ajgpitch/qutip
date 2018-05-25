@@ -79,7 +79,7 @@ if debug:
 # any collapse operators were given.
 #
 def mesolve(H, rho0, tlist, c_ops=[], e_ops=[], args={}, options=None,
-            progress_bar=None, _safe_mode=True):
+            progress_bar=None, _safe_mode=True, cgen=None):
     """
     Master equation evolution of a density matrix for a given Hamiltonian and
     set of collapse operators, or a Liouvillian.
@@ -208,6 +208,8 @@ def mesolve(H, rho0, tlist, c_ops=[], e_ops=[], args={}, options=None,
         operators for which to calculate the expectation values.
 
     """
+    #TODO qoc:  doc cgen
+
     # check whether c_ops or e_ops is is a single operator
     # if so convert it to a list containing only that operator
     if isinstance(c_ops, Qobj):
@@ -287,7 +289,7 @@ def mesolve(H, rho0, tlist, c_ops=[], e_ops=[], args={}, options=None,
                 # operators in list string format
                 res = _mesolve_list_str_td([H], rho0, tlist, c_ops,
                                            e_ops, args, options,
-                                           progress_bar)
+                                           progress_bar, cgen=cgen)
             elif n_func > 0:
                 # constant hamiltonian but time-dependent collapse
                 # operators in list function format
@@ -319,7 +321,7 @@ def mesolve(H, rho0, tlist, c_ops=[], e_ops=[], args={}, options=None,
             else:
                 res = _mesolve_list_str_td(H, rho0, tlist, c_ops,
                                            e_ops, args, options,
-                                           progress_bar)
+                                           progress_bar, cgen=cgen)
 
         else:
             raise TypeError("Incorrect specification of Hamiltonian " +
@@ -546,7 +548,7 @@ def dsuper_list_td_with_state(t, y, L_list, args):
 # cython compilation
 #
 def _mesolve_list_str_td(H_list, rho0, tlist, c_list, e_ops, args, opt,
-                         progress_bar):
+                         progress_bar, cgen=None):
     """
     Internal function for solving the master equation. See mesolve for usage.
     """
@@ -708,11 +710,7 @@ def _mesolve_list_str_td(H_list, rho0, tlist, c_list, e_ops, args, opt,
     for k in range(len(me_cops_obj)):
         string_list.append("me_cops_obj[%d]" % k)
 
-    for name, value in args.items():
-        if isinstance(value, np.ndarray):
-            string_list.append(name)
-        else:
-            string_list.append(str(value))
+    string_list.extend(_get_args_param_list(args))
     parameter_string = ",".join(string_list)
 
     #
@@ -723,16 +721,29 @@ def _mesolve_list_str_td(H_list, rho0, tlist, c_list, e_ops, args, opt,
             config.tdname = "rhs" + str(os.getpid()) + str(config.cgen_num)
         else:
             config.tdname = opt.rhs_filename
-        cgen = Codegen(h_terms=len(Lcoeff), h_tdterms=Lcoeff,
-                       c_td_splines=me_cops_coeff,
-                       c_td_spline_flags=me_cops_obj_flags, args=args,
-                       config=config, use_openmp=opt.use_openmp,
-                       omp_components=omp_components,
-                       omp_threads=opt.openmp_threads)
+        if cgen is None:
+            cgen = Codegen(h_terms=len(Lcoeff), h_tdterms=Lcoeff,
+                           c_td_splines=me_cops_coeff,
+                           c_td_spline_flags=me_cops_obj_flags, args=args,
+                           config=config, use_openmp=opt.use_openmp,
+                           omp_components=omp_components,
+                           omp_threads=opt.openmp_threads)
+        else:
+            cgen.h_terms = range(len(Lcoeff))
+            cgen.h_tdterms = Lcoeff
+            cgen.c_td_splines = me_cops_coeff
+            cgen.c_td_spline_flags = me_cops_obj_flags
+            cgen.args = args
+            cgen.config = config
+            cgen.use_openmp = opt.use_openmp
+            cgen.omp_components = omp_components
+            cgen.omp_threads = opt.openmp_threads
         cgen.generate(config.tdname + ".pyx")
 
-        code = compile('from ' + config.tdname + ' import cy_td_ode_rhs',
-                       '<string>', 'exec')
+        comp_str = 'from ' + config.tdname + ' import cy_td_ode_rhs'
+        if cgen.td_globals is not None:
+            comp_str += ', init_globals'
+        code = compile(comp_str, '<string>', 'exec')
         exec(code, globals())
         config.tdfunc = cy_td_ode_rhs
 
@@ -748,6 +759,7 @@ def _mesolve_list_str_td(H_list, rho0, tlist, c_list, e_ops, args, opt,
         r = scipy.integrate.ode(config.tdfunc)
         code = compile('r.set_f_params(' + parameter_string + ')',
                        '<string>', 'exec')
+
     r.set_integrator('zvode', method=opt.method, order=opt.order,
                      atol=opt.atol, rtol=opt.rtol, nsteps=opt.nsteps,
                      first_step=opt.first_step, min_step=opt.min_step,
@@ -756,10 +768,25 @@ def _mesolve_list_str_td(H_list, rho0, tlist, c_list, e_ops, args, opt,
 
     exec(code, locals(), args)
 
+    if cgen and cgen.td_globals is not None:
+        parameter_string = ",".join(_get_args_param_list(cgen.td_globals))
+        code = compile('init_globals(' + parameter_string + ')',
+                       '<string>', 'exec')
+        exec(code, globals(), cgen.td_globals)
+
     #
     # call generic ODE code
     #
     return _generic_ode_solve(r, rho0, tlist, e_ops, opt, progress_bar)
+
+def _get_args_param_list(args):
+    string_list = []
+    for name, value in args.items():
+        if isinstance(value, np.ndarray):
+            string_list.append(name)
+        else:
+            string_list.append(str(value))
+    return string_list
 
 def _td_ode_rhs_super(t, y, arglist):
     N = int(np.sqrt(len(y)))
@@ -1323,15 +1350,16 @@ class MESolver(DynamicsSolver):
     """
 
     def __init__(self, dyn_gen, initial=None, tlist=None, c_ops=[], e_ops=[],
-                 args={}, options=None, progress_bar=None):
+                 args={}, options=None, progress_bar=None, cgen=None):
         DynamicsSolver.__init__(self, dyn_gen, initial=initial, tlist=tlist,
                                 e_ops=e_ops, args=args, options=options,
-                                progress_bar=progress_bar)
+                                progress_bar=progress_bar, cgen=cgen)
         self.c_ops = c_ops
 
     def run(self, dyn_gen=None, initial=None, tlist=None,
             c_ops=None, e_ops=None,
-            args=None, options=None, progress_bar=None, _safe_mode=True):
+            args=None, options=None, progress_bar=None,
+            _safe_mode=True, cgen=None):
         """
         Run the solver with the given parameters or those defined for the
         object where they are not given.
@@ -1394,9 +1422,13 @@ class MESolver(DynamicsSolver):
         if progress_bar is None:
             progress_bar = self.progress_bar
 
+        if cgen is None:
+            cgen = self.cgen
+
         self.result = mesolve(dyn_gen, initial, tlist,
                               c_ops=c_ops, e_ops=e_ops,
                               args=args, options=options,
-                              progress_bar=progress_bar, _safe_mode=_safe_mode)
+                              progress_bar=progress_bar,
+                              _safe_mode=_safe_mode, cgen=cgen)
 
         return self.result

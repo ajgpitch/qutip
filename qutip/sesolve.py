@@ -515,7 +515,7 @@ def _sesolve_list_str_td(H_list, psi0, tlist, e_ops, args, opt,
                    '<string>', 'exec')
     exec(code, locals(), args)
 
-    if cgen.td_globals is not None:
+    if cgen and cgen.td_globals is not None:
         parameter_string = ",".join(_get_args_param_list(cgen.td_globals))
         code = compile('init_globals(' + parameter_string + ')',
                        '<string>', 'exec')
