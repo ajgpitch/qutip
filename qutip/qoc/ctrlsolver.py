@@ -48,6 +48,7 @@ from qutip import Qobj
 import qutip.solver
 from qutip.rhs_generate import rhs_clear
 from qutip.cy.utilities import _cython_build_cleanup
+from qutip.cy.codegen import Codegen
 # QuTiP logging
 import qutip.settings as qset
 import qutip.logging_utils as logging
@@ -668,21 +669,25 @@ class ControlSolverPWC(ControlSolver):
                 self.evo_solver.options.rhs_reuse = self.integ_rhs_reuse
 
             if self.solver_combines_dyn_gen:
-                # Add qoc pwc solver parameters
-                # These will be calculated
-                # timeslot index
-                self.evo_solver.args['qtrl_k'] = 0
-                self.evo_solver.args['qtrl_amp'] = np.array([self.num_tslots],
-                                                            dtype=np.float64)
-                self.evo_solver.args['qtrl_T'] = self.total_time
-                self.evo_solver.args['qtrl_nts'] = self.num_tslots
-                self.evo_solver.args['qtrl_nctrls'] = self.num_ctrls
-                self.evo_solver.options.param_calc_lines = [
+                # Add td globals
+                td_globals = {'qtrl_k':-1,
+                              'qtrl_amp':np.zeros([self.num_tslots],
+                                                  dtype=np.float64)}
+                param_calc = [
                     "cdef size_t j",
                     "qtrl_k = min(int(qtrl_nts*t/qtrl_T), qtrl_nts - 1)",
                     "for j in range(qtrl_nctrls):",
                     "    qtrl_amp[j] = qtrl_tsctrlamp[qtrl_k, j]"
                     ]
+                self.evo_solver.cgen = Codegen(td_globals=td_globals,
+                                               param_calc=param_calc)
+                # Add qoc pwc solver parameters
+                # These will be calculated
+                # timeslot index
+                self.evo_solver.args['qtrl_T'] = self.total_time
+                self.evo_solver.args['qtrl_nts'] = self.num_tslots
+                self.evo_solver.args['qtrl_nctrls'] = self.num_ctrls
+
 
         self._initialized = True
 

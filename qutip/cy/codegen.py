@@ -97,8 +97,14 @@ class Codegen():
         for line in cython_preamble(self.use_openmp):
             self.write(line)
 
+        # declare and add initialisation function for globals if there are any
         if self.td_globals is not None:
             for line in self.global_declare():
+                self.write(line)
+            for line in cython_checks() + self.init_globals_func_header():
+                self.write(line)
+            self.indent()
+            for line in self.set_init_globals():
                 self.write(line)
 
         # write function for Hamiltonian terms (there is always at least one
@@ -149,7 +155,9 @@ class Codegen():
     def _get_declare(self, name, value):
 
         if isinstance(value, np.ndarray):
-            ret = ",\n        np.ndarray[np.%s_t, ndim=%d] %s" % \
+            # TODO qoc: consider conversion to memoryview
+            #           possibly as optional based on attribute
+            ret = "np.ndarray[np.%s_t, ndim=%d] %s" % \
                 (value.dtype.name, len(value.shape), name)
         else:
             if isinstance(value, (int, np.int32, np.int64)):
@@ -158,8 +166,7 @@ class Codegen():
                 kind = 'float'
             elif isinstance(value, (complex, np.complex128)):
                 kind = 'complex'
-            #kind = type(value).__name__
-            ret = ",\n        " + kind + " " + name
+            ret = kind + " " + name
         return ret
 
     def _get_arg_str(self, args):
@@ -179,6 +186,20 @@ class Codegen():
 
     def globals_line(self):
         return "globals " + ','.join(self.td_globals.keys)
+
+    def init_globals_func_header(self):
+        """Creates function header for time-dependent ODE RHS."""
+        func_name = "def init_globals("
+        param_list = [self._get_declare("init_" + name, value)
+                        for name, value in self.td_globals.items()]
+        input_vars = ",\n        ".join(param_list)
+        func_end = "):"
+        return [func_name + input_vars + func_end]
+
+    def set_init_globals(self):
+        lines = [name + " = " + "init_" + name
+                 for name in self.td_globals]
+        return lines
 
     def ODE_func_header(self):
         """Creates function header for time-dependent ODE RHS."""

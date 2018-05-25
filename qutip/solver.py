@@ -75,6 +75,8 @@ class DynamicsSolver(object):
         Optional instance of BaseProgressBar, or a subclass thereof, for
         showing the progress of the simulation.
 
+
+
     Attributes
     ----------
     dyn_gen : :class: qutip.Qobj
@@ -110,8 +112,9 @@ class DynamicsSolver(object):
         Run the solver as it is currently configured.
 
     """
+    #TODO qoc: doc cgen
     def __init__(self, dyn_gen, initial=None, tlist=None, e_ops=[], args={},
-            options=None, progress_bar=None):
+            options=None, progress_bar=None, cgen=None):
         self.dyn_gen = dyn_gen
         self.initial = initial
         if not tlist is None:
@@ -126,6 +129,7 @@ class DynamicsSolver(object):
         self.args = args
         self.options = options
         self.progress_bar = progress_bar
+        self.cgen = cgen
 
     def run(self, *args):
         raise NotImplementedError("This is the baseclass. Use a subclass")

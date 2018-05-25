@@ -183,7 +183,7 @@ def sesolve(H, psi0, tlist, e_ops=[], args={}, options=None,
 
     elif n_str > 0:
         res = _sesolve_list_str_td(H, psi0, tlist, e_ops, args, options,
-                                   progress_bar, td_globals)
+                                   progress_bar, cgen)
 
     elif isinstance(H, (types.FunctionType,
                         types.BuiltinFunctionType,
@@ -464,11 +464,7 @@ def _sesolve_list_str_td(H_list, psi0, tlist, e_ops, args, opt,
     for k in range(len(Lobj)):
         string_list.append("Lobj[%d]" % k)
 
-    for name, value in args.items():
-        if isinstance(value, np.ndarray):
-            string_list.append(name)
-        else:
-            string_list.append(str(value))
+    string_list.extend(_get_args_param_list(args))
     parameter_string = ",".join(string_list)
 
     #
@@ -494,8 +490,10 @@ def _sesolve_list_str_td(H_list, psi0, tlist, e_ops, args, opt,
             cgen.omp_threads = opt.openmp_threads
         cgen.generate(config.tdname + ".pyx")
 
-        code = compile('from ' + config.tdname + ' import cy_td_ode_rhs',
-                       '<string>', 'exec')
+        comp_str = 'from ' + config.tdname + ' import cy_td_ode_rhs'
+        if cgen.td_globals is not None:
+            comp_str += ', import init_globals'
+        code = compile(comp_str, '<string>', 'exec')
         exec(code, globals())
         config.tdfunc = cy_td_ode_rhs
 
@@ -515,9 +513,12 @@ def _sesolve_list_str_td(H_list, psi0, tlist, e_ops, args, opt,
     r.set_initial_value(initial_vector, tlist[0])
     code = compile('r.set_f_params(' + parameter_string + ')',
                    '<string>', 'exec')
-
     exec(code, locals(), args)
 
+    if cgen.td_globals is not None:
+        code = compile('init_globals(' + _get_args_param_list + ')',
+                       '<string>', 'exec')
+        exec(code, cgen.td_globals)
 
     # Remove RHS cython file if necessary
     if not opt.rhs_reuse and config.tdname:
@@ -529,7 +530,14 @@ def _sesolve_list_str_td(H_list, psi0, tlist, e_ops, args, opt,
     return _generic_ode_solve(r, psi0, tlist, e_ops, opt, progress_bar,
                               dims=psi0.dims)
 
-
+def _get_args_param_list(args):
+    string_list = []
+    for name, value in args.items():
+        if isinstance(value, np.ndarray):
+            string_list.append(name)
+        else:
+            string_list.append(str(value))
+    return string_list
 # -----------------------------------------------------------------------------
 # Wave function evolution using a ODE solver (unitary quantum evolution), for
 # time dependent Hamiltonians
@@ -868,10 +876,10 @@ class SESolver(DynamicsSolver):
     """
 
     def __init__(self, H, initial=None, tlist=None, e_ops=[], args={},
-            options=None, progress_bar=None):
+            options=None, progress_bar=None, cgen=None):
         DynamicsSolver.__init__(self, H, initial=initial, tlist=tlist,
                                 e_ops=e_ops, args=args, options=options,
-                                progress_bar=progress_bar)
+                                progress_bar=progress_bar, cgen=cgen)
 
     @property
     def H(self):
@@ -882,7 +890,7 @@ class SESolver(DynamicsSolver):
         self.dyn_gen = dyn_gen
 
     def run(self, H=None, initial=None, tlist=None, e_ops=None, args=None,
-            options=None, progress_bar=None, _safe_mode=True):
+            options=None, progress_bar=None, _safe_mode=True, cgen=None):
         """
         Run the solver with the given parameters or those defined for the
         object where they are not given.
@@ -920,7 +928,7 @@ class SESolver(DynamicsSolver):
             Expectation values for the state, or
             the state / operator at each of the times in tlist
         """
-
+        #TODO qoc: doc cgen
         if H is None:
             H = self.H
 
@@ -942,8 +950,11 @@ class SESolver(DynamicsSolver):
         if progress_bar is None:
             progress_bar = self.progress_bar
 
+        if cgen is None:
+            cgen = self.cgen
+
         self.result = sesolve(H, initial, tlist, e_ops=e_ops, args=args,
                               options=options,  progress_bar=progress_bar,
-                              _safe_mode=_safe_mode)
+                              _safe_mode=_safe_mode, cgen=cgen)
 
         return self.result
