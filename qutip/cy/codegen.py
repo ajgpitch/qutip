@@ -97,6 +97,10 @@ class Codegen():
         for line in cython_preamble(self.use_openmp):
             self.write(line)
 
+        if self.td_globals is not None:
+            for line in self.global_declare():
+                self.write(line)
+
         # write function for Hamiltonian terms (there is always at least one
         # term)
         for line in cython_checks() + self.ODE_func_header():
@@ -167,11 +171,14 @@ class Codegen():
             ret += ",\n        " + self._get_declare(name, value)
         return ret
 
-    def global_declare(self, td_globals):
+    def global_declare(self):
         lines = []
-        for name, value in td_globals.items():
+        for name, value in self.td_globals.items():
             lines.append(self._get_declare(name, value))
         return lines
+
+    def globals_line(self):
+        return "globals " + ','.join(self.td_globals.keys)
 
     def ODE_func_header(self):
         """Creates function header for time-dependent ODE RHS."""
@@ -248,6 +255,9 @@ class Codegen():
                      "cdef double complex * " +
                      'out = <complex *>PyDataMem_NEW_ZEROED(num_rows,sizeof(complex))']
         func_vars.append(" ")
+
+        # globals
+        func_vars.append(self.globals_line)
 
         # parameter pre calc lines
         if self.param_calc:
