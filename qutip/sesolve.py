@@ -481,7 +481,7 @@ def _sesolve_list_str_td(H_list, psi0, tlist, e_ops, args, opt,
                            omp_components=omp_components,
                            omp_threads=opt.openmp_threads)
         else:
-            cgen.h_terms = n_L_terms
+            cgen.h_terms = range(n_L_terms)
             cgen.h_tdterms = Lcoeff
             cgen.args = args
             cgen.config = config
@@ -492,7 +492,7 @@ def _sesolve_list_str_td(H_list, psi0, tlist, e_ops, args, opt,
 
         comp_str = 'from ' + config.tdname + ' import cy_td_ode_rhs'
         if cgen.td_globals is not None:
-            comp_str += ', import init_globals'
+            comp_str += ', init_globals'
         code = compile(comp_str, '<string>', 'exec')
         exec(code, globals())
         config.tdfunc = cy_td_ode_rhs
@@ -516,9 +516,10 @@ def _sesolve_list_str_td(H_list, psi0, tlist, e_ops, args, opt,
     exec(code, locals(), args)
 
     if cgen.td_globals is not None:
-        code = compile('init_globals(' + _get_args_param_list + ')',
+        parameter_string = ",".join(_get_args_param_list(cgen.td_globals))
+        code = compile('init_globals(' + parameter_string + ')',
                        '<string>', 'exec')
-        exec(code, cgen.td_globals)
+        exec(code, globals(), cgen.td_globals)
 
     # Remove RHS cython file if necessary
     if not opt.rhs_reuse and config.tdname:

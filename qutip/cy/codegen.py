@@ -104,8 +104,10 @@ class Codegen():
             for line in cython_checks() + self.init_globals_func_header():
                 self.write(line)
             self.indent()
+            self.write(self.globals_line())
             for line in self.set_init_globals():
                 self.write(line)
+            self.dedent()
 
         # write function for Hamiltonian terms (there is always at least one
         # term)
@@ -181,11 +183,11 @@ class Codegen():
     def global_declare(self):
         lines = []
         for name, value in self.td_globals.items():
-            lines.append(self._get_declare(name, value))
+            lines.append("cdef " + self._get_declare(name, value))
         return lines
 
     def globals_line(self):
-        return "globals " + ','.join(self.td_globals.keys)
+        return "global " + ','.join(self.td_globals.keys())
 
     def init_globals_func_header(self):
         """Creates function header for time-dependent ODE RHS."""
@@ -272,13 +274,15 @@ class Codegen():
 
     def func_vars(self):
         """Writes the variables and their types & spmv parts"""
-        func_vars = ["", 'cdef size_t row', 'cdef unsigned int num_rows = vec.shape[0]',
-                     "cdef double complex * " +
-                     'out = <complex *>PyDataMem_NEW_ZEROED(num_rows,sizeof(complex))']
+        func_vars = [""]
+        if self.td_globals is not None :
+            func_vars.append(self.globals_line())
+        func_vars.extend(
+                ['cdef size_t row', 'cdef unsigned int num_rows = vec.shape[0]',
+                 "cdef double complex * out = " +
+                 "<complex *>PyDataMem_NEW_ZEROED(num_rows,sizeof(complex))"])
         func_vars.append(" ")
 
-        # globals
-        func_vars.append(self.globals_line)
 
         # parameter pre calc lines
         if self.param_calc:

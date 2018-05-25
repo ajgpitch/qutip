@@ -670,14 +670,14 @@ class ControlSolverPWC(ControlSolver):
 
             if self.solver_combines_dyn_gen:
                 # Add td globals
-                td_globals = {'qtrl_k':-1,
-                              'qtrl_amp':np.zeros([self.num_tslots],
-                                                  dtype=np.float64)}
+                td_globals = {'qtrl_k':-1}
                 param_calc = [
-                    "cdef size_t j",
                     "qtrl_k = min(int(qtrl_nts*t/qtrl_T), qtrl_nts - 1)",
-                    "for j in range(qtrl_nctrls):",
-                    "    qtrl_amp[j] = qtrl_tsctrlamp[qtrl_k, j]"
+#                    "for j in range(qtrl_nctrls):",
+#                    "    qtrl_amp[j] = qtrl_tsctrlamp[qtrl_k, j]"
+                    "qtrl_amp[:] = qtrl_tsctrlamp[qtrl_k, :]"#,
+#                    "print('qtrl_k: ' + str(qtrl_k))",
+#                    "print('qtrl_amp: ' + str(qtrl_amp))"
                     ]
                 self.evo_solver.cgen = Codegen(td_globals=td_globals,
                                                param_calc=param_calc)
@@ -687,7 +687,7 @@ class ControlSolverPWC(ControlSolver):
                 self.evo_solver.args['qtrl_T'] = self.total_time
                 self.evo_solver.args['qtrl_nts'] = self.num_tslots
                 self.evo_solver.args['qtrl_nctrls'] = self.num_ctrls
-
+                self.evo_solver.args['qtrl_amp'] = self.ctrl_amps[0, :]
 
         self._initialized = True
 
@@ -796,6 +796,7 @@ class ControlSolverPWC(ControlSolver):
             self._integ_tdname = qutip.solver.config.tdname
         self.cost = self.cost_meter.compute_cost(
                                 self.evo_solver_result.states[-1], self.target)
+        print("cost: {}".format(self.cost))
         return self.cost
 
 
