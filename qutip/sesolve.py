@@ -50,7 +50,7 @@ from qutip.solver import (Result, Options, DynamicsSolver,
 
 from qutip.rhs_generate import _td_format_check, _td_wrap_array_str
 from qutip.interpolate import Cubic_Spline
-from qutip.superoperator import operator_to_vector, spre
+from qutip.superoperator import operator_to_vector, spre, mat2vec
 from qutip.settings import debug
 from qutip.cy.spmatfuncs import (cy_expect_psi, cy_ode_rhs,
                                  cy_ode_psi_func_td,
@@ -501,18 +501,23 @@ def _sesolve_list_str_td(H_list, psi0, tlist, e_ops, args, opt,
     # setup integrator
     #
     if oper_evo:
-        initial_vector = operator_to_vector(psi0).full().ravel()
+        initial_vector = mat2vec(psi0.full()).ravel('F')
+        r = scipy.integrate.ode(_td_ode_rhs_super)
+        code = compile('r.set_f_params([' + parameter_string + '])',
+                       '<string>', 'exec')
     else:
         initial_vector = psi0.full().ravel()
+        r = scipy.integrate.ode(config.tdfunc)
+        code = compile('r.set_f_params(' + parameter_string + ')',
+                       '<string>', 'exec')
 
-    r = scipy.integrate.ode(config.tdfunc)
     r.set_integrator('zvode', method=opt.method, order=opt.order,
                      atol=opt.atol, rtol=opt.rtol, nsteps=opt.nsteps,
                      first_step=opt.first_step, min_step=opt.min_step,
                      max_step=opt.max_step)
     r.set_initial_value(initial_vector, tlist[0])
-    code = compile('r.set_f_params(' + parameter_string + ')',
-                   '<string>', 'exec')
+#    code = compile('r.set_f_params(' + parameter_string + ')',
+#                   '<string>', 'exec')
     exec(code, locals(), args)
 
     if cgen and cgen.td_globals is not None:
@@ -539,6 +544,16 @@ def _get_args_param_list(args):
         else:
             string_list.append(str(value))
     return string_list
+
+# TODO: cythonize this?
+def _td_ode_rhs_super(t, y, arglist):
+    N = int(np.sqrt(len(y)))
+    out = np.zeros(N, dtype=complex)
+    y2 = np.zeros(len(y), dtype=complex)
+    for i in range(N):
+        out = cy_td_ode_rhs(t, y[i*N:(i+1)*N], *arglist)
+        y2[i*N:(i+1)*N] = out
+    return y2
 # -----------------------------------------------------------------------------
 # Wave function evolution using a ODE solver (unitary quantum evolution), for
 # time dependent Hamiltonians
