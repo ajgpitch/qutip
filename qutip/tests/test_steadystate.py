@@ -141,7 +141,7 @@ def test_qubit_power_gmres():
         c_op_list.append(np.sqrt(rate) * sm)
         rate = gamma1 * n_th
         c_op_list.append(np.sqrt(rate) * sm.dag())
-        rho_ss = steadystate(H, c_op_list, method='power-gmres', mtol=1e-1)
+        rho_ss = steadystate(H, c_op_list, method='power-gmres')#, mtol=1e-1)
         p_ss[idx] = expect(sm.dag() * sm, rho_ss)
 
     p_ss_analytic = np.exp(-1.0 / wth_vec) / (1 + np.exp(-1.0 / wth_vec))
