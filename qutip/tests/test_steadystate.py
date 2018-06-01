@@ -114,7 +114,7 @@ def test_qubit_power():
         c_op_list.append(np.sqrt(rate) * sm)
         rate = gamma1 * n_th
         c_op_list.append(np.sqrt(rate) * sm.dag())
-        rho_ss = steadystate(H, c_op_list, method='power', mtol=1e-5)
+        rho_ss = steadystate(H, c_op_list, method='power')#, mtol=1e-5)
         p_ss[idx] = expect(sm.dag() * sm, rho_ss)
 
     p_ss_analytic = np.exp(-1.0 / wth_vec) / (1 + np.exp(-1.0 / wth_vec))
@@ -307,7 +307,7 @@ def test_ho_power():
         c_op_list.append(np.sqrt(rate) * a)
         rate = gamma1 * n_th
         c_op_list.append(np.sqrt(rate) * a.dag())
-        rho_ss = steadystate(H, c_op_list, method='power', mtol=1e-5)
+        rho_ss = steadystate(H, c_op_list, method='power')#, mtol=1e-5)
         p_ss[idx] = np.real(expect(a.dag() * a, rho_ss))
 
     p_ss_analytic = 1.0 / (np.exp(1.0 / wth_vec) - 1)
@@ -333,7 +333,7 @@ def test_ho_power_gmres():
         c_op_list.append(np.sqrt(rate) * a)
         rate = gamma1 * n_th
         c_op_list.append(np.sqrt(rate) * a.dag())
-        rho_ss = steadystate(H, c_op_list, method='power-gmres', mtol=1e-1,
+        rho_ss = steadystate(H, c_op_list, method='power-gmres',
                              use_precond=1)
         p_ss[idx] = np.real(expect(a.dag() * a, rho_ss))
 
@@ -469,7 +469,7 @@ def test_driven_cavity_power():
     H = Omega * (a.dag() + a)
     c_ops = [np.sqrt(Gamma) * a]
 
-    rho_ss = steadystate(H, c_ops, method='power', mtol=1e-5,)
+    rho_ss = steadystate(H, c_ops, method='power')#, mtol=1e-5,)
     rho_ss_analytic = coherent_dm(N, -1.0j * (Omega)/(Gamma/2))
 
     assert_((rho_ss - rho_ss_analytic).norm() < 1e-4)
@@ -486,7 +486,7 @@ def test_driven_cavity_power_gmres():
     H = Omega * (a.dag() + a)
     c_ops = [np.sqrt(Gamma) * a]
     M = build_preconditioner(H, c_ops, method='power')
-    rho_ss = steadystate(H, c_ops, method='power-gmres', M=M, mtol=1e-1,
+    rho_ss = steadystate(H, c_ops, method='power-gmres', M=M,
                          use_precond=1)
     rho_ss_analytic = coherent_dm(N, -1.0j * (Omega)/(Gamma/2))
     assert_((rho_ss - rho_ss_analytic).norm() < 1e-4)

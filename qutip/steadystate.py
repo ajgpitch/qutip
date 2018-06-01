@@ -886,9 +886,9 @@ def _steadystate_power(L, ss_args):
             v = lu.solve(v)
         elif ss_args['method'] == 'power-gmres':
             try:
-                print("types: L {}, v {}".format(type(L), type(v)))
-                print("try gmres(L, v): L:\n{}\nv:\n{}".format(L, v))
-                print("dense L:\n{}".format(L.todense()))
+                #print("types: L {}, v {}".format(type(L), type(v)))
+                #print("try gmres(L, v): L:\n{}\nv:\n{}".format(L, v))
+                #print("dense L:\n{}".format(L.todense()))
                 v, check = gmres(L, v, tol=mtol, atol=ss_args['matol'],
                                  M=ss_args['M'], x0=ss_args['x0'],
                                  restart=ss_args['restart'],
@@ -929,8 +929,17 @@ def _steadystate_power(L, ss_args):
                                         callback=_iter_count)
         else:
             raise Exception("Invalid iterative solver method.")
-        print("gmres - v: {}, check: {}".format(v, check))
+        #print("gmres - v: {}, check: {}".format(v, check))
+        print("{} check: {}".format(ss_args['method'], check))
         if check > 0:
+            if len(v) < 10:
+                print("{} - v: {}".format(ss_args['method'], v))
+            else:
+                if np.all(np.isnan(v)):
+                    print("{} - v: {} NaN".format(ss_args['method'], len(v)))
+                else:
+                    print("{} - v: {} No NaN".format(ss_args['method'], len(v)))
+
             raise Exception("{} failed to find solution in "
                             "{} iterations.".format(ss_args['method'],
                                                      check))
