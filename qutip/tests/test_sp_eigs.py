@@ -48,8 +48,11 @@ def test_SparseHermValsVecs():
     """
 
     # check using number operator
-    N = num(10)
+    N = num(8)
+    #N = num(10)
+    print("check using number operator")
     spvals, spvecs = N.eigenstates(sparse=True)
+    print("eigs returned")
     for k in range(10):
         # check that eigvals are in proper order
         assert_equal(abs(spvals[k] - k) <= 1e-13, True)
