@@ -154,9 +154,11 @@ class Codegen():
             raise SyntaxError("Error in code generator")
         self.level -= 1
 
-    def _get_declare(self, name, value):
+    def _get_declare(self, name, value, prim_types_only=False):
 
         if isinstance(value, np.ndarray):
+            if prim_types_only:
+                raise TypeError("Unsupported type '{}'.".format(type(value)))
             # TODO qoc: consider conversion to memoryview
             #           possibly as optional based on attribute
             ret = "np.ndarray[np.%s_t, ndim=%d] %s" % \
@@ -168,6 +170,8 @@ class Codegen():
                 kind = 'float'
             elif isinstance(value, (complex, np.complex128)):
                 kind = 'complex'
+            else:
+                raise TypeError("Unsupported type '{}'.".format(type(value)))
             ret = kind + " " + name
         return ret
 
@@ -183,7 +187,13 @@ class Codegen():
     def global_declare(self):
         lines = []
         for name, value in self.td_globals.items():
-            lines.append("cdef " + self._get_declare(name, value))
+            try:
+                lines.append("cdef " + self._get_declare(name, value,
+                                                         prim_types_only=True))
+            except Exception as e:
+                raise e.__class__("Cannot declare '{}' as global variable. "
+                                  "{}".format(name, e))
+
         return lines
 
     def globals_line(self):

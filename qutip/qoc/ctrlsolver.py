@@ -670,7 +670,7 @@ class ControlSolverPWC(ControlSolver):
 
             if self.solver_combines_dyn_gen:
                 # Add td globals
-                td_globals = {'qtrl_k':-1}
+                td_globals = {'qtrl_k': -1}#, 'amps': self.ctrl_amps[0, :]}
                 param_calc = [
                     "qtrl_k = min(int(qtrl_nts*t/qtrl_T), qtrl_nts - 1)",
 #                    "for j in range(qtrl_nctrls):",
