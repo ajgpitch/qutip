@@ -134,6 +134,7 @@ class ControlSolver(object):
         self.integ_rhs_reuse = True
         self.integ_rhs_tidyup = True
         self._integ_tdname = None
+        self._td_dyn_gen_constructed = False
 
     def clear(self):
         self.evo_solver_result = None
@@ -447,6 +448,7 @@ class ControlSolverPWC(ControlSolver):
         self._total_time = 0.0
         self._tslot_time = None
         self._changed_amp_mask = None
+        self._set_param_calc_lines()
 
     @property
     def num_tslots(self):
@@ -485,7 +487,18 @@ class ControlSolverPWC(ControlSolver):
 
     @property
     def tslot_time(self):
+        """timeslot time boundaries. Including start and end times"""
         return self._tslot_time
+
+    @property
+    def tslot_end_time(self):
+        """Time at end of timeslots"""
+        return self._tslot_time[1:]
+
+    @property
+    def tslot_start_time(self):
+        """Time at start of timeslots"""
+        return self._tslot_time[:-1]
 
     def get_tslot_idx(self, t, safe=True):
         """
@@ -616,7 +629,10 @@ class ControlSolverPWC(ControlSolver):
     def _init_dyn_gen(self):
 
         if self.solver_combines_dyn_gen:
-            self.evo_solver.dyn_gen = self._construct_td_dyn_gen()
+            if not self._td_dyn_gen_constructed:
+                self.evo_solver.dyn_gen = self._construct_td_dyn_gen()
+            else:
+                self.evo_solver.args['qtrl_tsctrlamp'] = self.ctrl_amps
             # TODO: Check td_args - is this possible?
         else:
             self._dyn_gen = [self._get_combined_dyn_gen(k)
@@ -639,10 +655,47 @@ class ControlSolverPWC(ControlSolver):
         else:
             raise TypeError("Invalid type for {}".format(name))
 
-    def _get_optim_params(self):
+    def get_optim_params(self):
         """Return the params to be optimised"""
         return self.ctrl_amps.ravel()
 
+    def _set_param_calc_lines(self):
+        # NOTE: the ODE solver does not necessarily always go forward in time
+        self._param_calc_tslot_vary_width = [
+#            "cdef int prev_k = qtrl_k",
+#            "if qtrl_init_ts:",
+#            "    qtrl_init_ts = 0",
+#            "    find_next_tslot = 1",
+#            "else:",
+            "while 1:",
+            "    # check the most likely first: t remains within the tslot",
+            "    if qtrl_k > 0:",
+            "        if t > qtrl_tset[qtrl_k-1] and t <= qtrl_tset[qtrl_k]:",
+            "            same_tslot = 1",
+            "            break",
+            "        if t <= qtrl_tset[qtrl_k-1]:",
+            "            qtrl_k -= 1",
+            "            if qtrl_k == 0: break",
+            "    elif t <= qtrl_tset[0]:",
+            "        qtrl_k = 0",
+            "        same_tslot = 1",
+            "        break",
+            "    if t > qtrl_tset[qtrl_k]:",
+            "        if qtrl_k == qtrl_nts - 1: break",
+            "        qtrl_k += 1",
+#            "if prev_k != qtrl_k:",
+#            "    print('Timeslot {} found for t {}'.format(qtrl_k, t))",
+            "qtrl_amp[:] = qtrl_tsctrlamp[qtrl_k, :]",
+            ""
+            ]
+
+        self._param_calc_tslot_fixed_width = [
+            "qtrl_k = min(int(qtrl_nts*t/qtrl_T), qtrl_nts - 1)",
+            "qtrl_amp[:] = qtrl_tsctrlamp[qtrl_k, :]",
+            ""
+            #"print('qtrl_k: ' + str(qtrl_k))",
+            #"print('qtrl_amp: ' + str(qtrl_amp))"
+            ]
     def init_solve(self, ctrl_amps=None):
         """
         Set the control amps based on the optimisation parameters
@@ -661,6 +714,8 @@ class ControlSolverPWC(ControlSolver):
         self.ctrl_amps = self._check_ctrl_amps(ctrl_amps)
         self._init_dyn_gen()
 
+        #print("Initial amps:\n{}".format(self.ctrl_amps))
+
         if self.evo_solver is not None:
             if self.evo_solver.options is None:
                 self.evo_solver.options = qutip.solver.Options(
@@ -670,15 +725,13 @@ class ControlSolverPWC(ControlSolver):
 
             if self.solver_combines_dyn_gen:
                 # Add td globals
-                td_globals = {'qtrl_k': -1}#, 'amps': self.ctrl_amps[0, :]}
-                param_calc = [
-                    "qtrl_k = min(int(qtrl_nts*t/qtrl_T), qtrl_nts - 1)",
-#                    "for j in range(qtrl_nctrls):",
-#                    "    qtrl_amp[j] = qtrl_tsctrlamp[qtrl_k, j]"
-                    "qtrl_amp[:] = qtrl_tsctrlamp[qtrl_k, :]"#,
-#                    "print('qtrl_k: ' + str(qtrl_k))",
-#                    "print('qtrl_amp: ' + str(qtrl_amp))"
-                    ]
+#                td_globals = {'qtrl_init_ts': True,
+#                              'qtrl_k': 0,
+#                              'qtrl_last_t': 1000.0}
+                td_globals = {'qtrl_k': 0}
+                # Code to find the appropriate timeslot index
+                # and set the qtrl_amps array values
+                param_calc = self._param_calc_tslot_vary_width
                 self.evo_solver.cgen = Codegen(td_globals=td_globals,
                                                param_calc=param_calc)
                 # Add qoc pwc solver parameters
@@ -687,11 +740,12 @@ class ControlSolverPWC(ControlSolver):
                 self.evo_solver.args['qtrl_T'] = self.total_time
                 self.evo_solver.args['qtrl_nts'] = self.num_tslots
                 self.evo_solver.args['qtrl_nctrls'] = self.num_ctrls
-                self.evo_solver.args['qtrl_amp'] = self.ctrl_amps[0, :]
+                self.evo_solver.args['qtrl_amp'] = self.ctrl_amps[0, :].copy()
+                self.evo_solver.args['qtrl_tset'] = self.tslot_end_time
 
         self._initialized = True
 
-    def _set_ctrl_amp_params(self, optim_params, chg_mask=None):
+    def set_ctrl_amp_params(self, optim_params, chg_mask=None):
         """Set the control amps based on the optimisation parameters"""
         # Assumes that the shapes are compatible, as this will have been
         # tested in init_ctrl_amp_params
@@ -705,10 +759,13 @@ class ControlSolverPWC(ControlSolver):
                                                        self._num_ctrls])
 
     def _update_dyn_gen(self):
-        for k in range(self._num_tslots):
-            if (self._changed_amp_mask is None
-                    or np.any(self._changed_amp_mask[k, :])):
-                self._dyn_gen[k] = self._get_combined_dyn_gen(k)
+        if self.solver_combines_dyn_gen:
+            self.evo_solver.args['qtrl_tsctrlamp'] = self.ctrl_amps
+        else:
+            for k in range(self._num_tslots):
+                if (self._changed_amp_mask is None
+                        or np.any(self._changed_amp_mask[k, :])):
+                    self._dyn_gen[k] = self._get_combined_dyn_gen(k)
 
 
     @property
@@ -763,6 +820,12 @@ class ControlSolverPWC(ControlSolver):
         else:
             return [dg_op, dg_coeff]
 
+    def reconstruct_td_dyn_gen(self):
+        """
+        Make the string type td dynamics generator and apply to the evo solver
+        """
+        self.evo_solver.dyn_gen = self._construct_td_dyn_gen()
+
     def _construct_td_dyn_gen(self):
         """
         Make the string type td dynamics generator
@@ -773,6 +836,7 @@ class ControlSolverPWC(ControlSolver):
         for j, cdg in enumerate(self.ctrl_dyn_gen):
             dg_comb.append(self._build_td_dg(cdg, j))
 
+        self._td_dyn_gen_constructed = True
         return dg_comb
 
     def solve(self, skip_init=False):
@@ -782,16 +846,18 @@ class ControlSolverPWC(ControlSolver):
         if not self._initialized and not skip_init:
             self.init_solve()
 
-        if self.solver_combines_dyn_gen:
-            self.evo_solver.args['qtrl_tsctrlamp'] = self.ctrl_amps
-            #print("Amps: {}".format(self.ctrl_amps.flatten()))
-        else:
-            self._update_dyn_gen()
+#        if self.solver_combines_dyn_gen:
+#
+#            #print("Amps: {}".format(self.ctrl_amps.flatten()))
+#        else:
+        self._update_dyn_gen()
 
         #FIXME: Need to make work with the HEOM solver
 
+        #print("amps before evo solve:\n{}".format(self.ctrl_amps))
         self.evo_solver_result = self.evo_solver.run(initial=self.initial,
                                                      tlist=self.tlist)
+        #print("amps after evo solve:\n{}".format(self.ctrl_amps))
         if self.solver_combines_dyn_gen:
             self._integ_tdname = qutip.solver.config.tdname
         self.cost = self.cost_meter.compute_cost(

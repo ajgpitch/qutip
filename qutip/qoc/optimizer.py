@@ -277,7 +277,7 @@ class Optimizer(object):
         self.init_optim()
         # Init these to None so that all are seen to have changed on first
         # cost call.
-        self.optim_params = self.ctrl_solver._get_optim_params()
+        self.optim_params = self.ctrl_solver.get_optim_params()
 #        init_params =
 #        self.num_params = len(init_params)
         print("initial params:\n{}".format(self.optim_params))
@@ -305,7 +305,7 @@ class Optimizer(object):
 #                options=self.method_options,
                 callback=self._iter_step)
 
-            self.ctrl_solver._set_ctrl_amp_params(opt_res.x.copy())
+            self.ctrl_solver.set_ctrl_amp_params(opt_res.x.copy())
 
             self.result.termination_reason = opt_res.message
             # Note the iterations are counted in this object as well
@@ -376,8 +376,9 @@ class Optimizer(object):
 
         changed_param_mask = self._compare_optim_params(args[0])
         if np.any(changed_param_mask):
+            #print("Set amps from params: {}".format(args[0]))
             #FIXME: Try removing this copy()
-            self.ctrl_solver._set_ctrl_amp_params(args[0].copy(),
+            self.ctrl_solver.set_ctrl_amp_params(args[0].copy(),
                                                   changed_param_mask)
         else:
             print("Nothing changed")

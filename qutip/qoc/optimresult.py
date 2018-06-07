@@ -141,7 +141,7 @@ class OptimResult(object):
         self.final_cost = optim.ctrl_solver.cost
         # FIXME:
         #self.grad_norm_final = dyn.fid_computer.grad_norm
-        self.final_optim_params = optim.ctrl_solver._get_optim_params()
+        self.final_optim_params = optim.ctrl_solver.get_optim_params()
 #        final_evo = dyn.full_evo
 #        if isinstance(final_evo, Qobj):
 #            result.evo_full_final = final_evo
