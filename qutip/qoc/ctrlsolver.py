@@ -231,6 +231,7 @@ class ControlSolver(object):
         # time dependent ctrls
         return self.ctrl_dyn_gen[j]
 
+    #TODO: Make checks public. There is no reason for privacy
     def _check_initial(self, initial=None, incompat_except=False):
         # In separate function, as may be overridden
         desc = 'parameter'
@@ -444,6 +445,8 @@ class ControlSolverPWC(ControlSolver):
         self.tlist = None
         self.ctrl_amps = None
         self.cost_meter = None
+        # Set True if tlist and tslot end times must coincide
+        self.requires_tlist_tslot_coincide = False
         self._num_tslots = 0
         self._total_time = 0.0
         self._tslot_time = None
@@ -533,15 +536,26 @@ class ControlSolverPWC(ControlSolver):
             return None
 
 
-    def _check_tlist(self, tlist=None):
+    def _check_tlist(self, tlist=None, force_tslot_coincide=None):
         # Assumes that _check_tslot_duration has already been called
         desc = 'parameter'
         if tlist is None:
             tlist = self.tlist
             desc = 'attribute'
 
+        # This may seem a little convoluted.
+        # The idea is to only show the warning when force_tslot_coincide
+        # was not specifically requested.
+        if force_tslot_coincide is None:
+            force_ts_coin = self.requires_tlist_tslot_coincide
+        else:
+            force_ts_coin = force_tslot_coincide
+
         if tlist is None:
-            return np.insert(np.cumsum(self.tslot_duration), 0, 0.0)
+            if force_tslot_coincide:
+                return np.insert(np.cumsum(self.tslot_duration), 0, 0.0)
+            else:
+                return np.array([0.0, self._total_time])
 
         try:
             tlist = np.array(tlist, dtype='f')
@@ -549,6 +563,10 @@ class ControlSolverPWC(ControlSolver):
             raise TypeError("Invalid type {} for {} 'tlist'. "
                             "Must be array_like. Attempt at array(tlist) "
                             "raised: {}".format(type(tlist), desc, e))
+        if len(tlist) < 2:
+            raise ValueError("Invalid len {} for {} 'tlist'. "
+                             "Must have a least start and end "
+                             "times.".format(len(tlist), desc))
 
         end_time = tlist[-1]
         if not np.isclose(end_time, self._get_total_time(), atol=qset.atol):
@@ -556,12 +574,17 @@ class ControlSolverPWC(ControlSolver):
                             "Must be equal to the timeslot total time "
                             "{}".format(end_time, desc, self._get_total_time()))
 
-        # The number of timeslots in the tlist must be a multiple of the
-        # number of timeslots for the controls
-        nts = len(tlist) - 1
-        if nts % self._num_tslots != 0:
-            nts = (nts//self._num_tslots + 1)*self._num_tslots
-            tlist = np.linspace(0.0, end_time, nts+1)
+        if force_ts_coin:
+            # The number of timeslots in the tlist must be a multiple of the
+            # number of timeslots for the controls
+            nts = len(tlist) - 1
+            if nts % self._num_tslots != 0:
+                nts = (nts//self._num_tslots + 1)*self._num_tslots
+                tlist = np.linspace(0.0, end_time, nts+1)
+                if force_tslot_coincide is None:
+                    logger.warning("{} 'tlist' len set to {} to ensure ctrl "
+                                   "timeslot times coincide with tlist "
+                                   "elements".format(desc, len(tlist)))
 
         return tlist
 
@@ -839,12 +862,18 @@ class ControlSolverPWC(ControlSolver):
         self._td_dyn_gen_constructed = True
         return dg_comb
 
-    def solve(self, skip_init=False):
+    def solve(self, skip_init=False, tlist=None):
         """
         Solve the evolution with the PWC dynamics generators
         """
         if not self._initialized and not skip_init:
             self.init_solve()
+        if tlist is None:
+            tlist=self.tlist
+        else:
+            tlist = self._check_tlist(tlist)
+
+
 
 #        if self.solver_combines_dyn_gen:
 #
@@ -856,7 +885,7 @@ class ControlSolverPWC(ControlSolver):
 
         #print("amps before evo solve:\n{}".format(self.ctrl_amps))
         self.evo_solver_result = self.evo_solver.run(initial=self.initial,
-                                                     tlist=self.tlist)
+                                                     tlist=tlist)
         #print("amps after evo solve:\n{}".format(self.ctrl_amps))
         if self.solver_combines_dyn_gen:
             self._integ_tdname = qutip.solver.config.tdname
