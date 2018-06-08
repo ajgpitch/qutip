@@ -231,7 +231,9 @@ class ControlSolver(object):
         # time dependent ctrls
         return self.ctrl_dyn_gen[j]
 
-    #TODO: Make checks public. There is no reason for privacy
+    def check_initial(self, initial=None):
+        return self._check_initial(initial=initial, incompat_except=True)
+
     def _check_initial(self, initial=None, incompat_except=False):
         # In separate function, as may be overridden
         desc = 'parameter'
@@ -255,6 +257,9 @@ class ControlSolver(object):
 
         self._evo_dims = initial.dims
         return initial
+
+    def check_target(self, target=None):
+        return self._check_target(target=target, incompat_except=True)
 
     def _check_target(self, target=None, incompat_except=False):
         # In separate function, as may be overridden
@@ -349,6 +354,10 @@ class ControlSolver(object):
                         "{} dims {} are not compatible with initial "
                         "oper / state dims {}.".format(name, dg.dims, ed))
 
+    def check_drift(self, drift_dyn_gen=None):
+        return self._check_drift(drift_dyn_gen=drift_dyn_gen,
+                                  incompat_except=True)
+
     def _check_drift(self, drift_dyn_gen=None, incompat_except=False):
         # In separate function, as may be overridden
         # Assumes initial has already been checked
@@ -374,6 +383,10 @@ class ControlSolver(object):
 #                        raise TypeError("Incompatible quantum object dimensions "
 #                                        "for 'drift_dyn_gen' and 'initial'")
         return drift_dyn_gen
+
+    def check_ctrls(self, ctrl_dyn_gen=None):
+        return self._check_ctrls(ctrl_dyn_gen=ctrl_dyn_gen,
+                                 incompat_except=True)
 
     def _check_ctrls(self, ctrl_dyn_gen=None,  incompat_except=False):
         # In separate function, as may be overridden
@@ -405,7 +418,6 @@ class ControlSolver(object):
         Initialise the control solver
         Check all the attribute types and dimensional compatibility
         """
-
         self._check_target(incompat_except=True)
         self._check_initial(incompat_except=True)
         self.cost_meter.init_normalization(self)
@@ -430,10 +442,10 @@ class ControlSolverPWC(ControlSolver):
         self.reset()
         ControlSolver.__init__(self, evo_solver, cost_meter, initial, target,
                                drift_dyn_gen, ctrl_dyn_gen)
-        self.tslot_duration = self._check_tslot_duration(tslot_duration)
-        self.tlist = self._check_tlist(tlist)
+        self.tslot_duration = self.check_tslot_duration(tslot_duration)
+        self.tlist = self.check_tlist(tlist)
         #TODO: Check ctrl amps
-        self.ctrl_amps = self._check_ctrl_amps(initial_amps)
+        self.ctrl_amps = self.check_ctrl_amps(initial_amps)
         # The plan is to use the solver internal combining of
         # dynamics generators
         self.solver_combines_dyn_gen = solver_combines_dyn_gen
@@ -458,7 +470,7 @@ class ControlSolverPWC(ControlSolver):
         """Number of tslot_duration"""
         return self._get_num_tslots()
 
-    def _check_tslot_duration(self, tslot_duration=None):
+    def check_tslot_duration(self, tslot_duration=None):
         desc = 'parameter'
         if tslot_duration is None:
             tslot_duration = self.tslot_duration
@@ -535,9 +547,9 @@ class ControlSolverPWC(ControlSolver):
         else:
             return None
 
-
-    def _check_tlist(self, tlist=None, force_tslot_coincide=None):
-        # Assumes that _check_tslot_duration has already been called
+    def check_tlist(self, tlist=None, force_tslot_coincide=None):
+        # Assumes that _check_tslot_duration has already been called,
+        # which it should have, as it's in __init__
         desc = 'parameter'
         if tlist is None:
             tlist = self.tlist
@@ -598,9 +610,10 @@ class ControlSolverPWC(ControlSolver):
             self._num_tslots = 0
         return self._num_tslots
 
-    def _check_ctrl_amps(self, ctrl_amps=None):
+    def check_ctrl_amps(self, ctrl_amps=None):
         # In separate function, as may be overridden
-        # Assumes that _check_tslot_duration has already been called
+        # Assumes that _check_tslot_duration has already been called,
+        # which it should have, as it's in __init__
         desc = 'parameter'
         if ctrl_amps is None:
             ctrl_amps = self.ctrl_amps
@@ -733,8 +746,8 @@ class ControlSolverPWC(ControlSolver):
         #TODO: Add skip checks
 
         ControlSolver.init_solve(self)
-        self.tslot_duration = self._check_tslot_duration()
-        self.ctrl_amps = self._check_ctrl_amps(ctrl_amps)
+        self.tslot_duration = self.check_tslot_duration()
+        self.ctrl_amps = self.check_ctrl_amps(ctrl_amps)
         self._init_dyn_gen()
 
         #print("Initial amps:\n{}".format(self.ctrl_amps))
@@ -871,7 +884,7 @@ class ControlSolverPWC(ControlSolver):
         if tlist is None:
             tlist=self.tlist
         else:
-            tlist = self._check_tlist(tlist)
+            tlist = self.check_tlist(tlist)
 
 
 
