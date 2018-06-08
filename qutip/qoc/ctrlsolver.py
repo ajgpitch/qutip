@@ -438,14 +438,16 @@ class ControlSolverPWC(ControlSolver):
     def __init__(self, evo_solver, cost_meter, initial, target,
                  drift_dyn_gen, ctrl_dyn_gen,
                  tslot_duration, tlist=None, initial_amps=None,
+                 ctrl_amp_mask=None,
                  solver_combines_dyn_gen=True):
         self.reset()
         ControlSolver.__init__(self, evo_solver, cost_meter, initial, target,
                                drift_dyn_gen, ctrl_dyn_gen)
         self.tslot_duration = self.check_tslot_duration(tslot_duration)
         self.tlist = self.check_tlist(tlist)
-        #TODO: Check ctrl amps
-        self.ctrl_amps = self.check_ctrl_amps(initial_amps)
+        if self.ctrl_amps is not None:
+            self.ctrl_amps = self.check_ctrl_amps(initial_amps)
+        self.ctrl_amp_mask = self._check_ctrl_amp_mask(ctrl_amp_mask)
         # The plan is to use the solver internal combining of
         # dynamics generators
         self.solver_combines_dyn_gen = solver_combines_dyn_gen
@@ -456,6 +458,7 @@ class ControlSolverPWC(ControlSolver):
         self.tslot_duration = None
         self.tlist = None
         self.ctrl_amps = None
+        self.ctrl_amp_mask = None
         self.cost_meter = None
         # Set True if tlist and tslot end times must coincide
         self.requires_tlist_tslot_coincide = False
@@ -612,7 +615,7 @@ class ControlSolverPWC(ControlSolver):
 
     def check_ctrl_amps(self, ctrl_amps=None):
         # In separate function, as may be overridden
-        # Assumes that _check_tslot_duration has already been called,
+        # Assumes that check_tslot_duration has already been called,
         # which it should have, as it's in __init__
         desc = 'parameter'
         if ctrl_amps is None:
@@ -620,11 +623,11 @@ class ControlSolverPWC(ControlSolver):
             desc = 'attribute'
 
         try:
-            ctrl_amps = np.array(ctrl_amps)
+            ctrl_amps = np.asfarray(ctrl_amps)
         except Exception as e:
             raise TypeError("Invalid type {} for {} 'ctrl_amps'. "
-                            "Must be array_like. Attempt at array raised: "
-                            "{}".format(type(ctrl_amps), desc, e))
+                            "Must be float array_like. Attempt at array "
+                            "raised: {}".format(type(ctrl_amps), desc, e))
 
         if (len(ctrl_amps.shape) != 2 or
             ctrl_amps.shape[0] != self.num_tslots or
@@ -641,6 +644,88 @@ class ControlSolverPWC(ControlSolver):
                                                   self._num_ctrls))
 
         return ctrl_amps
+
+    def check_ctrl_amp_mask(self, mask=None):
+        return self._check_ctrl_amp_mask(mask=mask, incompat_except=True)
+
+    def _check_ctrl_amp_mask(self, mask=None, incompat_except=False):
+        # Assumes that check_ctrl_amps has already been called,
+        # which it should have, as it's in __init__
+        # Note: None is a valid setting
+        desc = 'parameter'
+        if mask is None:
+            mask = self.ctrl_amp_mask
+            desc = 'attribute'
+
+        if mask is None:
+            return None
+
+        if self.ctrl_amps is None:
+            msg = ("Cannot check compatibility of {} 'ctrl_amp_mask'. "
+                   "No ctrl_amps set.".format(desc))
+            if incompat_except:
+                raise Incompatible(msg)
+            else:
+                logger.warn(msg)
+                return mask
+
+        try:
+            mask = np.array(mask, dtype=bool)
+        except Exception as e:
+            raise TypeError("Invalid type {} for {} 'ctrl_amp_mask'. "
+                            "Must be bool array_like. Attempt at array "
+                            "raised: {}".format(type(mask), desc, e))
+
+        if mask.shape == self.ctrl_amps.shape:
+            # Shapes match, all good. No other checks necessary
+            # Full tslot ctrl mask given
+            pass
+        else:
+            mask_vec = mask.flatten()
+            if len(mask_vec) == self.num_tslots:
+                # make mask from timeslot mask
+                mask = np.column_stack([mask_vec]*self.num_ctrls)
+            elif len(mask_vec) == self.num_ctrls:
+                # make mask from ctrl mask
+                mask = np.row_stack([mask_vec]*self.num_tslots)
+            else:
+                msg = (
+                    "Incompatible shape {} for {} 'ctrl_amp_mask'. "
+                    "Must either match the shape of the ctrl_amps.shape={} "
+                    "or the length equal (for a tslot mask) num_tslots={} or "
+                    "(for a ctrls mask) num_ctrls={}"
+                    ".".format(mask.shape, desc, self.ctrl_amps.shape,
+                               self.num_tslots, self.num_ctrls))
+                if incompat_except:
+                    raise Incompatible(msg)
+                else:
+                    logger.warn(msg)
+
+        return mask
+
+    def _check_target(self, target=None, incompat_except=False):
+        # In separate function, as may be overridden
+        # Assumes initial has already been checked (and set)
+        desc = 'parameter'
+        if target is None:
+            target = self._target
+            desc = 'attribute'
+
+        if not isinstance(target, Qobj):
+            raise TypeError("Invalid type {} for {} 'target'. "
+                            "Must be of type {}.".format(type(target),
+                                                        desc, Qobj))
+
+        try:
+            self._check_evo_qobj(target, "{} {}".format(desc, 'target'),
+                                 self._initial, 'attribute initial')
+        except Incompatible as e:
+            if incompat_except:
+                raise e
+            else:
+                logger.warning(e)
+
+        return target
 
     @property
     def total_time(self):
@@ -732,6 +817,7 @@ class ControlSolverPWC(ControlSolver):
             #"print('qtrl_k: ' + str(qtrl_k))",
             #"print('qtrl_amp: ' + str(qtrl_amp))"
             ]
+
     def init_solve(self, ctrl_amps=None):
         """
         Set the control amps based on the optimisation parameters
@@ -742,12 +828,15 @@ class ControlSolverPWC(ControlSolver):
             float valued array of inital control amplitudes
             Must be of shape (num_tslots, num_ctrls)
         """
+        ControlSolver.init_solve(self)
 
         #TODO: Add skip checks
+        if ctrl_amps is None:
+            ctrl_amps = self.ctrl_amps
 
-        ControlSolver.init_solve(self)
         self.tslot_duration = self.check_tslot_duration()
         self.ctrl_amps = self.check_ctrl_amps(ctrl_amps)
+        self.ctrl_amp_mask = self._check_ctrl_amp_mask(incompat_except=True)
         self._init_dyn_gen()
 
         #print("Initial amps:\n{}".format(self.ctrl_amps))
