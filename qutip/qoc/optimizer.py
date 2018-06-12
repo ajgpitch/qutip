@@ -305,8 +305,7 @@ class Optimizer(object):
 #                options=self.method_options,
                 callback=self._iter_step)
 
-            self.ctrl_solver.set_ctrl_amp_params(opt_res.x.copy())
-
+            self._update_ctrl_params(opt_res.x)
             self.result.termination_reason = opt_res.message
             # Note the iterations are counted in this object as well
             # so there are compared here for interest sake only
@@ -373,15 +372,7 @@ class Optimizer(object):
                     self.stats.num_cost_calls))
 
         #print(args[0])
-
-        changed_param_mask = self._compare_optim_params(args[0])
-        if np.any(changed_param_mask):
-            #print("Set amps from params: {}".format(args[0]))
-            #FIXME: Try removing this copy()
-            self.ctrl_solver.set_ctrl_amp_params(args[0].copy(),
-                                                  changed_param_mask)
-        else:
-            print("Nothing changed")
+        self._update_ctrl_params(args[0])
 
         if not self.ctrl_solver.is_solution_current:
             self.ctrl_solver.solve()
@@ -479,7 +470,6 @@ class Optimizer(object):
         elif isinstance(except_term, terminator.MaxCostCallTerminate):
             result.max_cost_call_exceeded = True
 
-
     def _compare_optim_params(self, new_params):
         """
         Determine if any parameters have changed.
@@ -494,23 +484,32 @@ class Optimizer(object):
 #        num_changed : int
 #            Number of params changed
 
-        changed_mask : ndarray
-            bool mask of changed parameters
+        changed_index : ndarray
+            bool index of changed parameters
         """
 
         if self.optim_params is None:
             #num_changed = num_params
-            changed_mask = np.empty((self.num_params), dtype=bool)
-            changed_mask[:] = True
+            changed_index = np.ones((self.num_params), dtype=bool)
         else:
-            changed_mask = (np.abs(self.optim_params - new_params) >
+            changed_index = (np.abs(self.optim_params - new_params) >
                                                             self.param_atol)
 
         if self.log_level <= logging.DEBUG:
-            if np.any(changed_mask):
+            if np.any(changed_index):
                 logger.debug("{} optim params changed".format(
-                    np.count_nonzero(changed_mask)))
+                    np.count_nonzero(changed_index)))
             else:
                 logger.debug("No optim params changed")
 
-        return changed_mask
+        return changed_index
+
+    def _update_ctrl_params(self, new_params):
+        changed_param_index = self._compare_optim_params(new_params)
+        if np.any(changed_param_index):
+            #print("Set amps from params: {}".format(args[0]))
+            #FIXME: Try removing this copy()
+            self.ctrl_solver.set_ctrl_amp_params(new_params.copy(),
+                                                  changed_param_index)
+        else:
+            print("Nothing changed")

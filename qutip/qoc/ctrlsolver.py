@@ -72,7 +72,7 @@ def _is_string(var):
         return False
 
     return False
-
+type
 
 class ControlSolver(object):
     """
@@ -92,8 +92,9 @@ class ControlSolver(object):
         #TODO: Check type of solver
         self.evo_solver = evo_solver
         if not isinstance(cost_meter, qoccost.CostMeter):
-            raise TypeError("Invalid type {} for 'cost_meter'. Must be of type "
-                            "{}".format(type(cost_meter), qoccost.CostMeter))
+            raise TypeError("Invalid type {} for 'cost_meter'. Must be of "
+                            "type {}".format(type(cost_meter),
+                                             qoccost.CostMeter))
         self.cost_meter = cost_meter
         self._initial = self._check_initial(initial)
         self._target = self._check_target(target)
@@ -376,12 +377,6 @@ class ControlSolver(object):
             else:
                 logger.warning(e)
 
-
-        # This check is not valid for all evo_solvers
-        # Should be moved to the evo_solver
-#        if self.drift_dyn_gen.dims[1] != self.initial.dims[0]:
-#                        raise TypeError("Incompatible quantum object dimensions "
-#                                        "for 'drift_dyn_gen' and 'initial'")
         return drift_dyn_gen
 
     def check_ctrls(self, ctrl_dyn_gen=None):
@@ -438,7 +433,7 @@ class ControlSolverPWC(ControlSolver):
     def __init__(self, evo_solver, cost_meter, initial, target,
                  drift_dyn_gen, ctrl_dyn_gen,
                  tslot_duration, tlist=None, initial_amps=None,
-                 ctrl_amp_mask=None,
+                 ctrl_tslot_filter=None,
                  solver_combines_dyn_gen=True):
         self.reset()
         ControlSolver.__init__(self, evo_solver, cost_meter, initial, target,
@@ -446,8 +441,9 @@ class ControlSolverPWC(ControlSolver):
         self.tslot_duration = self.check_tslot_duration(tslot_duration)
         self.tlist = self.check_tlist(tlist)
         if initial_amps is not None:
-            self.ctrl_amps = self.check_ctrl_amps(initial_amps)
-        self.ctrl_amp_mask = self._check_ctrl_amp_mask(ctrl_amp_mask)
+            self.ctrl_amps = self.check_ctrl_amps(initial_amps.copy())
+        self.ctrl_tslot_filter = self._check_ctrl_tslot_filter(
+                                                    ctrl_tslot_filter)
         # The plan is to use the solver internal combining of
         # dynamics generators
         self.solver_combines_dyn_gen = solver_combines_dyn_gen
@@ -458,14 +454,14 @@ class ControlSolverPWC(ControlSolver):
         self.tslot_duration = None
         self.tlist = None
         self.ctrl_amps = None
-        self.ctrl_amp_mask = None
+        self.ctrl_tslot_filter = None
         self.cost_meter = None
         # Set True if tlist and tslot end times must coincide
         self.requires_tlist_tslot_coincide = False
         self._num_tslots = 0
         self._total_time = 0.0
         self._tslot_time = None
-        self._changed_amp_mask = None
+        self._changed_amp_index = None
         self._set_param_calc_lines()
 
     @property
@@ -587,7 +583,8 @@ class ControlSolverPWC(ControlSolver):
         if not np.isclose(end_time, self._get_total_time(), atol=qset.atol):
             raise ValueError("Invalid end time {} for {} 'tlist'. "
                             "Must be equal to the timeslot total time "
-                            "{}".format(end_time, desc, self._get_total_time()))
+                            "{}".format(end_time, desc,
+                                         self._get_total_time()))
 
         if force_ts_coin:
             # The number of timeslots in the tlist must be a multiple of the
@@ -648,63 +645,64 @@ class ControlSolverPWC(ControlSolver):
 
         return ctrl_amps
 
-    def check_ctrl_amp_mask(self, mask=None):
-        return self._check_ctrl_amp_mask(mask=mask, incompat_except=True)
+    def check_ctrl_tslot_filter(self, cts_filter=None):
+        return self._check_ctrl_tslot_filter(cts_filter=cts_filter,
+                                             incompat_except=True)
 
-    def _check_ctrl_amp_mask(self, mask=None, incompat_except=False):
+    def _check_ctrl_tslot_filter(self, cts_filter=None, incompat_except=False):
         # Assumes that check_ctrl_amps has already been called,
         # which it should have, as it's in __init__
         # Note: None is a valid setting
         desc = 'parameter'
-        if mask is None:
-            mask = self.ctrl_amp_mask
+        if cts_filter is None:
+            cts_filter = self.ctrl_tslot_filter
             desc = 'attribute'
 
-        if mask is None:
+        if cts_filter is None:
             return None
 
         if self.ctrl_amps is None:
-            msg = ("Cannot check compatibility of {} 'ctrl_amp_mask'. "
+            msg = ("Cannot check compatibility of {} 'ctrl_tslot_filter'. "
                    "No ctrl_amps set.".format(desc))
             if incompat_except:
                 raise Incompatible(msg)
             else:
                 logger.warn(msg)
-                return mask
+                return cts_filter
 
         try:
-            mask = np.array(mask, dtype=bool)
+            cts_filter = np.array(cts_filter, dtype=bool)
         except Exception as e:
-            raise TypeError("Invalid type {} for {} 'ctrl_amp_mask'. "
+            raise TypeError("Invalid type {} for {} 'ctrl_tslot_filter'. "
                             "Must be bool array_like. Attempt at array "
-                            "raised: {}".format(type(mask), desc, e))
+                            "raised: {}".format(type(cts_filter), desc, e))
 
-        if mask.shape == self.ctrl_amps.shape:
+        if cts_filter.shape == self.ctrl_amps.shape:
             # Shapes match, all good. No other checks necessary
-            # Full tslot ctrl mask given
+            # Full tslot ctrl tslot filter given
             pass
         else:
-            mask_vec = mask.flatten()
-            if len(mask_vec) == self.num_tslots:
-                # make mask from timeslot mask
-                mask = np.column_stack([mask_vec]*self.num_ctrls)
-            elif len(mask_vec) == self.num_ctrls:
-                # make mask from ctrl mask
-                mask = np.row_stack([mask_vec]*self.num_tslots)
+            filter_vec = cts_filter.flatten()
+            if len(filter_vec) == self.num_tslots:
+                # make cts_filter from timeslot filter
+                cts_filter = np.column_stack([filter_vec]*self.num_ctrls)
+            elif len(filter_vec) == self.num_ctrls:
+                # make cts_filter from ctrl filter
+                cts_filter = np.row_stack([filter_vec]*self.num_tslots)
             else:
                 msg = (
-                    "Incompatible shape {} for {} 'ctrl_amp_mask'. "
+                    "Incompatible shape {} for {} 'ctrl_tslot_filter'. "
                     "Must either match the shape of the ctrl_amps.shape={} "
-                    "or the length equal (for a tslot mask) num_tslots={} or "
-                    "(for a ctrls mask) num_ctrls={}"
-                    ".".format(mask.shape, desc, self.ctrl_amps.shape,
+                    "or the length equal (for a tslot filter) num_tslots={} "
+                    "or (for a ctrls filter) num_ctrls={}"
+                    ".".format(cts_filter.shape, desc, self.ctrl_amps.shape,
                                self.num_tslots, self.num_ctrls))
                 if incompat_except:
                     raise Incompatible(msg)
                 else:
                     logger.warn(msg)
 
-        return mask
+        return cts_filter
 
     def _check_target(self, target=None, incompat_except=False):
         # In separate function, as may be overridden
@@ -781,30 +779,30 @@ class ControlSolverPWC(ControlSolver):
 
     def get_optim_params(self):
         """Return the params to be optimised"""
-        if self.ctrl_amp_mask is None:
+        if self.ctrl_tslot_filter is None:
             params = self.ctrl_amps.ravel()
         else:
-            params = self.ctrl_amps[self.ctrl_amp_mask].ravel()
+            params = self.ctrl_amps[self.ctrl_tslot_filter].ravel()
         return params
 
-    def set_ctrl_amp_params(self, optim_params, chg_mask=None):
+    def set_ctrl_amp_params(self, optim_params, chg_index=None):
         """Set the control amps based on the optimisation parameters"""
         # Assumes that the shapes are compatible, as this will have been
         # tested in check_ctrl_amps
-        if self.ctrl_amp_mask is None:
+        if self.ctrl_tslot_filter is None:
             self.ctrl_amps = optim_params.reshape([self._num_tslots,
                                                    self._num_ctrls])
         else:
-            self.ctrl_amps[self.ctrl_amp_mask] = optim_params
+            self.ctrl_amps[self.ctrl_tslot_filter] = optim_params
 
-        if chg_mask is None:
-            self._changed_amp_mask = None
+        if chg_index is None:
+            self._changed_amp_index.fill(False)
         else:
-            if self.ctrl_amp_mask is None:
-                self._changed_amp_mask = chg_mask.reshape([self._num_tslots,
+            if self.ctrl_tslot_filter is None:
+                self._changed_amp_index = chg_index.reshape([self._num_tslots,
                                                            self._num_ctrls])
             else:
-                self._changed_amp_mask[self.ctrl_amp_mask] = chg_mask
+                self._changed_amp_index[self.ctrl_tslot_filter] = chg_index
 
     def _set_param_calc_lines(self):
         # NOTE: the ODE solver does not necessarily always go forward in time
@@ -844,6 +842,80 @@ class ControlSolverPWC(ControlSolver):
             #"print('qtrl_amp: ' + str(qtrl_amp))"
             ]
 
+    def _update_dyn_gen(self):
+        if self.solver_combines_dyn_gen:
+            self.evo_solver.args['qtrl_tsctrlamp'] = self.ctrl_amps
+        else:
+            for k in range(self._num_tslots):
+                if np.any(self._changed_amp_index[k, :]):
+                    self._dyn_gen[k] = self._get_combined_dyn_gen(k)
+        self._changed_amp_index.fill(False)
+
+    @property
+    def is_solution_current(self):
+        if self.cost is None:
+            return False
+        if np.any(self._changed_amp_index):
+            return False
+        else:
+            return True
+
+    def _get_td_dyn_gen(self, t, args):
+        """Time dependent Hamiltonian function for solver"""
+
+        # get time slot
+        k = np.where(self._tslot_time <= t)[0][-1]
+        #print("time: {}".format(t))
+        return self._dyn_gen[k]
+
+    def _build_td_dg(self, dg, j=-1):
+        """Specific dynamics generator in str type td format"""
+
+        # assumes dyn gen opers have been checked for format
+        dg_coeff = None
+        if isinstance(dg, Qobj):
+            # No other time dependance
+            dg_op = dg
+        elif isinstance(dg, list):
+            dg_op = dg[0]
+            dg_coeff = dg[1]
+        else:
+            # this should never happen, as should have been checked
+            raise TypeError("Invalid type for ctrl "
+                             "dynamics generator {}".format(j))
+        if j >= 0:
+            # Ctrl not drift
+            amp_str = "qtrl_amp[{}]".format(j)
+
+            if dg_coeff is not None:
+                dg_coeff = "({}*{})".format(amp_str, dg_coeff)
+            else:
+                dg_coeff = "({})".format(amp_str)
+
+        if dg_coeff is None:
+            return dg_op
+        else:
+            return [dg_op, dg_coeff]
+
+    def reconstruct_td_dyn_gen(self):
+        """
+        Make the string type td dynamics generator and apply to the evo solver
+        """
+        self.evo_solver.dyn_gen = self._construct_td_dyn_gen()
+
+    def _construct_td_dyn_gen(self):
+        """
+        Make the string type td dynamics generator
+        """
+
+        self.tidyup_integ_td()
+        dg_comb = [self._build_td_dg(self.drift_dyn_gen)]
+        for j, cdg in enumerate(self.ctrl_dyn_gen):
+            dg_comb.append(self._build_td_dg(cdg, j))
+
+        self._td_dyn_gen_constructed = True
+        return dg_comb
+
     def init_solve(self, ctrl_amps=None):
         """
         Set the control amps based on the optimisation parameters
@@ -862,7 +934,9 @@ class ControlSolverPWC(ControlSolver):
 
         self.tslot_duration = self.check_tslot_duration()
         self.ctrl_amps = self.check_ctrl_amps(ctrl_amps)
-        self.ctrl_amp_mask = self._check_ctrl_amp_mask(incompat_except=True)
+        self.ctrl_tslot_filter = self._check_ctrl_tslot_filter(
+                                                    incompat_except=True)
+        self._changed_amp_index = np.zeros(self.ctrl_amps.shape, dtype=bool)
         self._init_dyn_gen()
 
         #print("Initial amps:\n{}".format(self.ctrl_amps))
@@ -896,87 +970,6 @@ class ControlSolverPWC(ControlSolver):
 
         self._initialized = True
 
-    def _update_dyn_gen(self):
-        if self.solver_combines_dyn_gen:
-            self.evo_solver.args['qtrl_tsctrlamp'] = self.ctrl_amps
-        else:
-            for k in range(self._num_tslots):
-                if (self._changed_amp_mask is None
-                        or np.any(self._changed_amp_mask[k, :])):
-                    self._dyn_gen[k] = self._get_combined_dyn_gen(k)
-
-
-    @property
-    def is_solution_current(self):
-        if self.cost is None:
-            return False
-        if self._changed_amp_mask is None:
-            return True
-        if np.any(self._changed_amp_mask):
-            return False
-        else:
-            return True
-
-    def _get_td_dyn_gen(self, t, args):
-        """Time dependent Hamiltonian function for solver"""
-
-        # get time slot
-        k = np.where(self._tslot_time <= t)[0][-1]
-        #print("time: {}".format(t))
-        return self._dyn_gen[k]
-
-    def _build_td_dg(self, dg, j=-1):
-        """Specific dynamics generator in str type td format"""
-
-        # assumes dyn gen opers have been checked for format
-        dg_coeff = None
-        if isinstance(dg, Qobj):
-            # No other time dependance
-            dg_op = dg
-        elif isinstance(dg, list):
-            dg_op = dg[0]
-            dg_coeff = dg[1]
-        else:
-            # this should never happen, as should have been checked
-            raise TypeError("Invalid type for ctrl "
-                             "dynamics generator {}".format(j))
-        if j >= 0:
-            # Ctrl not drift
-            # TODO: This assumes that timeslots are equally spaced
-            #       Will need to think of something more rigorous
-#            amp_str = "0 if (t >= {}) else {}[int({}*(t/{}))*{} + {}]".format(
-#                        T, 'ctrlamps', self._num_tslots, T, self._num_ctrls, j)
-            amp_str = "qtrl_amp[{}]".format(j)
-
-            if dg_coeff is not None:
-                dg_coeff = "({}*{})".format(amp_str, dg_coeff)
-            else:
-                dg_coeff = "({})".format(amp_str)
-
-        if dg_coeff is None:
-            return dg_op
-        else:
-            return [dg_op, dg_coeff]
-
-    def reconstruct_td_dyn_gen(self):
-        """
-        Make the string type td dynamics generator and apply to the evo solver
-        """
-        self.evo_solver.dyn_gen = self._construct_td_dyn_gen()
-
-    def _construct_td_dyn_gen(self):
-        """
-        Make the string type td dynamics generator
-        """
-
-        self.tidyup_integ_td()
-        dg_comb = [self._build_td_dg(self.drift_dyn_gen)]
-        for j, cdg in enumerate(self.ctrl_dyn_gen):
-            dg_comb.append(self._build_td_dg(cdg, j))
-
-        self._td_dyn_gen_constructed = True
-        return dg_comb
-
     def solve(self, skip_init=False, tlist=None):
         """
         Solve the evolution with the PWC dynamics generators
@@ -988,15 +981,7 @@ class ControlSolverPWC(ControlSolver):
         else:
             tlist = self.check_tlist(tlist)
 
-
-
-#        if self.solver_combines_dyn_gen:
-#
-#            #print("Amps: {}".format(self.ctrl_amps.flatten()))
-#        else:
         self._update_dyn_gen()
-
-        #FIXME: Need to make work with the HEOM solver
 
         #print("amps before evo solve:\n{}".format(self.ctrl_amps))
         self.evo_solver_result = self.evo_solver.run(initial=self.initial,
