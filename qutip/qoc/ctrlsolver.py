@@ -433,7 +433,7 @@ class ControlSolverPWC(ControlSolver):
     def __init__(self, evo_solver, cost_meter, initial, target,
                  drift_dyn_gen, ctrl_dyn_gen,
                  tslot_duration, tlist=None, initial_amps=None,
-                 ctrl_tslot_filter=None,
+                 ctrl_tslot_mask=None,
                  solver_combines_dyn_gen=True):
         self.reset()
         ControlSolver.__init__(self, evo_solver, cost_meter, initial, target,
@@ -442,8 +442,7 @@ class ControlSolverPWC(ControlSolver):
         self.tlist = self.check_tlist(tlist)
         if initial_amps is not None:
             self.ctrl_amps = self.check_ctrl_amps(initial_amps.copy())
-        self.ctrl_tslot_filter = self._check_ctrl_tslot_filter(
-                                                    ctrl_tslot_filter)
+        self.ctrl_tslot_mask = self._check_ctrl_tslot_mask(ctrl_tslot_mask)
         # The plan is to use the solver internal combining of
         # dynamics generators
         self.solver_combines_dyn_gen = solver_combines_dyn_gen
@@ -454,7 +453,7 @@ class ControlSolverPWC(ControlSolver):
         self.tslot_duration = None
         self.tlist = None
         self.ctrl_amps = None
-        self.ctrl_tslot_filter = None
+        self.ctrl_tslot_mask = None
         self.cost_meter = None
         # Set True if tlist and tslot end times must coincide
         self.requires_tlist_tslot_coincide = False
@@ -645,64 +644,64 @@ class ControlSolverPWC(ControlSolver):
 
         return ctrl_amps
 
-    def check_ctrl_tslot_filter(self, cts_filter=None):
-        return self._check_ctrl_tslot_filter(cts_filter=cts_filter,
+    def check_ctrl_tslot_mask(self, mask=None):
+        return self._check_ctrl_tslot_mask(mask=mask,
                                              incompat_except=True)
 
-    def _check_ctrl_tslot_filter(self, cts_filter=None, incompat_except=False):
+    def _check_ctrl_tslot_mask(self, mask=None, incompat_except=False):
         # Assumes that check_ctrl_amps has already been called,
         # which it should have, as it's in __init__
         # Note: None is a valid setting
         desc = 'parameter'
-        if cts_filter is None:
-            cts_filter = self.ctrl_tslot_filter
+        if mask is None:
+            mask = self.ctrl_tslot_mask
             desc = 'attribute'
 
-        if cts_filter is None:
+        if mask is None:
             return None
 
         if self.ctrl_amps is None:
-            msg = ("Cannot check compatibility of {} 'ctrl_tslot_filter'. "
+            msg = ("Cannot check compatibility of {} 'ctrl_tslot_mask'. "
                    "No ctrl_amps set.".format(desc))
             if incompat_except:
                 raise Incompatible(msg)
             else:
                 logger.warn(msg)
-                return cts_filter
+                return mask
 
         try:
-            cts_filter = np.array(cts_filter, dtype=bool)
+            mask = np.array(mask, dtype=bool)
         except Exception as e:
-            raise TypeError("Invalid type {} for {} 'ctrl_tslot_filter'. "
+            raise TypeError("Invalid type {} for {} 'ctrl_tslot_mask'. "
                             "Must be bool array_like. Attempt at array "
-                            "raised: {}".format(type(cts_filter), desc, e))
+                            "raised: {}".format(type(mask), desc, e))
 
-        if cts_filter.shape == self.ctrl_amps.shape:
+        if mask.shape == self.ctrl_amps.shape:
             # Shapes match, all good. No other checks necessary
-            # Full tslot ctrl tslot filter given
+            # Full ctrl tslot mask given
             pass
         else:
-            filter_vec = cts_filter.flatten()
-            if len(filter_vec) == self.num_tslots:
-                # make cts_filter from timeslot filter
-                cts_filter = np.column_stack([filter_vec]*self.num_ctrls)
-            elif len(filter_vec) == self.num_ctrls:
-                # make cts_filter from ctrl filter
-                cts_filter = np.row_stack([filter_vec]*self.num_tslots)
+            mask_vec = mask.flatten()
+            if len(mask_vec) == self.num_tslots:
+                # make mask from timeslot mask
+                mask = np.column_stack([mask_vec]*self.num_ctrls)
+            elif len(mask_vec) == self.num_ctrls:
+                # make mask from ctrl mask
+                mask = np.row_stack([mask_vec]*self.num_tslots)
             else:
                 msg = (
-                    "Incompatible shape {} for {} 'ctrl_tslot_filter'. "
+                    "Incompatible shape {} for {} 'ctrl_tslot_mask'. "
                     "Must either match the shape of the ctrl_amps.shape={} "
-                    "or the length equal (for a tslot filter) num_tslots={} "
-                    "or (for a ctrls filter) num_ctrls={}"
-                    ".".format(cts_filter.shape, desc, self.ctrl_amps.shape,
+                    "or the length equal (for a tslot mask) num_tslots={} "
+                    "or (for a ctrls mask) num_ctrls={}"
+                    ".".format(mask.shape, desc, self.ctrl_amps.shape,
                                self.num_tslots, self.num_ctrls))
                 if incompat_except:
                     raise Incompatible(msg)
                 else:
                     logger.warn(msg)
 
-        return cts_filter
+        return mask
 
     def _check_target(self, target=None, incompat_except=False):
         # In separate function, as may be overridden
@@ -779,30 +778,30 @@ class ControlSolverPWC(ControlSolver):
 
     def get_optim_params(self):
         """Return the params to be optimised"""
-        if self.ctrl_tslot_filter is None:
+        if self.ctrl_tslot_mask is None:
             params = self.ctrl_amps.ravel()
         else:
-            params = self.ctrl_amps[self.ctrl_tslot_filter].ravel()
+            params = self.ctrl_amps[~self.ctrl_tslot_mask].ravel()
         return params
 
     def set_ctrl_amp_params(self, optim_params, chg_index=None):
         """Set the control amps based on the optimisation parameters"""
         # Assumes that the shapes are compatible, as this will have been
         # tested in check_ctrl_amps
-        if self.ctrl_tslot_filter is None:
+        if self.ctrl_tslot_mask is None:
             self.ctrl_amps = optim_params.reshape([self._num_tslots,
                                                    self._num_ctrls])
         else:
-            self.ctrl_amps[self.ctrl_tslot_filter] = optim_params
+            self.ctrl_amps[~self.ctrl_tslot_mask] = optim_params
 
         if chg_index is None:
             self._changed_amp_index.fill(False)
         else:
-            if self.ctrl_tslot_filter is None:
+            if self.ctrl_tslot_mask is None:
                 self._changed_amp_index = chg_index.reshape([self._num_tslots,
                                                            self._num_ctrls])
             else:
-                self._changed_amp_index[self.ctrl_tslot_filter] = chg_index
+                self._changed_amp_index[~self.ctrl_tslot_mask] = chg_index
 
     def _set_param_calc_lines(self):
         # NOTE: the ODE solver does not necessarily always go forward in time
@@ -934,7 +933,7 @@ class ControlSolverPWC(ControlSolver):
 
         self.tslot_duration = self.check_tslot_duration()
         self.ctrl_amps = self.check_ctrl_amps(ctrl_amps)
-        self.ctrl_tslot_filter = self._check_ctrl_tslot_filter(
+        self.ctrl_tslot_mask = self._check_ctrl_tslot_mask(
                                                     incompat_except=True)
         self._changed_amp_index = np.zeros(self.ctrl_amps.shape, dtype=bool)
         self._init_dyn_gen()
