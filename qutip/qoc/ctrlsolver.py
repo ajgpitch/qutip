@@ -445,7 +445,7 @@ class ControlSolverPWC(ControlSolver):
                                drift_dyn_gen, ctrl_dyn_gen)
         self.tslot_duration = self.check_tslot_duration(tslot_duration)
         self.tlist = self.check_tlist(tlist)
-        if self.ctrl_amps is not None:
+        if initial_amps is not None:
             self.ctrl_amps = self.check_ctrl_amps(initial_amps)
         self.ctrl_amp_mask = self._check_ctrl_amp_mask(ctrl_amp_mask)
         # The plan is to use the solver internal combining of
@@ -621,6 +621,8 @@ class ControlSolverPWC(ControlSolver):
         if ctrl_amps is None:
             ctrl_amps = self.ctrl_amps
             desc = 'attribute'
+            if ctrl_amps is None:
+                raise ValueError("ctrl_amps attribute not set")
 
         try:
             ctrl_amps = np.asfarray(ctrl_amps)
