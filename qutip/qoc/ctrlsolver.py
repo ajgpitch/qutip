@@ -629,6 +629,7 @@ class ControlSolverPWC(ControlSolver):
                             "Must be float array_like. Attempt at array "
                             "raised: {}".format(type(ctrl_amps), desc, e))
 
+        print("Ctrl amps: {}".format(ctrl_amps))
         if (len(ctrl_amps.shape) != 2 or
             ctrl_amps.shape[0] != self.num_tslots or
             ctrl_amps.shape[1] != self.num_ctrls):
@@ -778,7 +779,30 @@ class ControlSolverPWC(ControlSolver):
 
     def get_optim_params(self):
         """Return the params to be optimised"""
-        return self.ctrl_amps.ravel()
+        if self.ctrl_amp_mask is None:
+            params = self.ctrl_amps.ravel()
+        else:
+            params = self.ctrl_amps[self.ctrl_amp_mask].ravel()
+        return params
+
+    def set_ctrl_amp_params(self, optim_params, chg_mask=None):
+        """Set the control amps based on the optimisation parameters"""
+        # Assumes that the shapes are compatible, as this will have been
+        # tested in check_ctrl_amps
+        if self.ctrl_amp_mask is None:
+            self.ctrl_amps = optim_params.reshape([self._num_tslots,
+                                                   self._num_ctrls])
+        else:
+            self.ctrl_amps[self.ctrl_amp_mask] = optim_params
+
+        if chg_mask is None:
+            self._changed_amp_mask = None
+        else:
+            if self.ctrl_amp_mask is None:
+                self._changed_amp_mask = chg_mask.reshape([self._num_tslots,
+                                                           self._num_ctrls])
+            else:
+                self._changed_amp_mask[self.ctrl_amp_mask] = chg_mask
 
     def _set_param_calc_lines(self):
         # NOTE: the ODE solver does not necessarily always go forward in time
@@ -869,19 +893,6 @@ class ControlSolverPWC(ControlSolver):
                 self.evo_solver.args['qtrl_tset'] = self.tslot_end_time
 
         self._initialized = True
-
-    def set_ctrl_amp_params(self, optim_params, chg_mask=None):
-        """Set the control amps based on the optimisation parameters"""
-        # Assumes that the shapes are compatible, as this will have been
-        # tested in init_ctrl_amp_params
-        self.ctrl_amps = optim_params.reshape([self._num_tslots,
-                                               self._num_ctrls])
-
-        if chg_mask is None:
-            self._changed_amp_mask = None
-        else:
-            self._changed_amp_mask = chg_mask.reshape([self._num_tslots,
-                                                       self._num_ctrls])
 
     def _update_dyn_gen(self):
         if self.solver_combines_dyn_gen:
