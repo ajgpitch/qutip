@@ -66,6 +66,8 @@ import scipy.sparse as sp
 import timeit
 # QuTiP
 from qutip import Qobj
+from qutip.superoperator import (vec2mat, mat2vec,
+                                vector_to_operator, operator_to_vector)
 # QuTiP logging
 import qutip.logging_utils as logging
 logger = logging.get_logger()
@@ -88,7 +90,7 @@ def _func_deprecation(message, stacklevel=3):
     calling with the deprecated parameter,
     """
     warnings.warn(message, DeprecationWarning, stacklevel=stacklevel)
-    
+
 def _trace(A):
     """wrapper for calculating the trace"""
     # input is an operator (Qobj, array, sparse etc), so
@@ -213,8 +215,8 @@ class FidelityComputer(object):
 
     @property
     def log_level(self):
-        return logger.level        
-        
+        return logger.level
+
     @log_level.setter
     def log_level(self, lvl):
         """
@@ -326,11 +328,11 @@ class FidCompUnitary(FidelityComputer):
         _func_deprecation("'set_phase_option' is deprecated. "
                             "Use phase_option property")
         self._init_phase_option(phase_option)
-        
+
     @property
     def phase_option(self):
         return self._phase_option
-        
+
     @phase_option.setter
     def phase_option(self, value):
         """
@@ -354,7 +356,7 @@ class FidCompUnitary(FidelityComputer):
         else:
             raise errors.UsageError(
                     "No option for phase_option '{}'".format(value))
-                                                            
+
     def init_comp(self):
         """
         Check configuration and initialise the normalisation
@@ -542,7 +544,7 @@ class FidCompUnitary(FidelityComputer):
         time_st = timeit.default_timer()
         for j in range(n_ctrls):
             for k in range(n_ts):
-                fwd_evo = dyn._fwd_evo[k]   
+                fwd_evo = dyn._fwd_evo[k]
                 onto_evo = dyn._onto_evo[k+1]
                 if dyn.oper_dtype == Qobj:
                     g = (onto_evo*dyn._get_prop_grad(k, j)*fwd_evo).tr()
@@ -576,13 +578,16 @@ class FidCompTraceDiff(FidelityComputer):
         represent some physical measure
         If None is given then it is caculated as 1/2N, where N
         is the dimension of the drift, when the Dynamics are initialised.
+
     """
+    #TODO: convert_vec2mat
 
     def reset(self):
         FidelityComputer.reset(self)
         self.id_text = 'TRACEDIFF'
         self.scale_factor = None
         self.uses_onwd_evo = True
+        self.vectorized_evo = True
         if not self.parent.prop_computer.grad_exact:
             raise errors.UsageError(
                 "This FidelityComputer can only be"
@@ -595,7 +600,13 @@ class FidCompTraceDiff(FidelityComputer):
         Calculates the scale_factor is not already set
         """
         if self.scale_factor is None:
-            self.scale_factor = 1.0 / (2.0*self.parent.get_drift_dim())
+            if self.vectorized_evo:
+                # This assumes a vectorized density matrix
+                self.scale_factor = 0.5
+            else:
+                self.scale_factor = 1.0 / (2.0*self.parent.get_drift_dim())
+            print("Scale factor calculated as {}".format(
+                    self.scale_factor))
             if self.log_level <= logging.DEBUG:
                 logger.debug("Scale factor calculated as {}".format(
                     self.scale_factor))
@@ -603,13 +614,26 @@ class FidCompTraceDiff(FidelityComputer):
     def get_fid_err(self):
         """
         Gets the absolute error in the fidelity
+        Note that this is only some measure of the infidelity that is
+        efficent to compute (and also compute gradients)
+        To compare with the unitary gate fidelity one would need to take
+        `sqrt(1 - get_fid_err())`
+
         """
         if not self.fidelity_current:
             dyn = self.parent
             dyn.compute_evolution()
             n_ts = dyn.num_tslots
             evo_final = dyn._fwd_evo[n_ts]
-            evo_f_diff = dyn._target - evo_final
+            evo_targ = dyn._target
+            if self.vectorized_evo:
+                if dyn.oper_dtype == Qobj:
+                    evo_final = vector_to_operator(evo_final)
+                    evo_targ = vector_to_operator(evo_targ)
+                else:
+                    evo_final = vec2mat(evo_final)
+                    evo_targ = vec2mat(evo_targ)
+            evo_f_diff = evo_targ - evo_final
             if self.log_level <= logging.DEBUG_VERBOSE:
                 logger.log(logging.DEBUG_VERBOSE, "Calculating TraceDiff "
                            "fidelity...\n Target:\n{}\n Evo final:\n{}\n"
@@ -686,7 +710,15 @@ class FidCompTraceDiff(FidelityComputer):
 
 
         evo_final = dyn._fwd_evo[n_ts]
-        evo_f_diff = dyn._target - evo_final
+        evo_targ = dyn._target
+        if self.vectorized_evo:
+            if dyn.oper_dtype == Qobj:
+                evo_final = vector_to_operator(evo_final)
+                evo_targ = vector_to_operator(evo_targ)
+            else:
+                evo_final = vec2mat(evo_final)
+                evo_targ = vec2mat(evo_targ)
+        evo_f_diff = evo_targ - evo_final
         for j in range(n_ctrls):
             for k in range(n_ts):
                 fwd_evo = dyn._fwd_evo[k]
@@ -694,6 +726,9 @@ class FidCompTraceDiff(FidelityComputer):
                     evo_grad = dyn._get_prop_grad(k, j)*fwd_evo
                     if k+1 < n_ts:
                         evo_grad = dyn._onwd_evo[k+1]*evo_grad
+                    if self.vectorized_evo:
+                        evo_grad = vector_to_operator(evo_grad)
+
                     # Note that the value should have not imagnary part, so
                     # using np.real, just avoids the complex casting warning
                     g = -2*self.scale_factor*np.real(
@@ -702,6 +737,8 @@ class FidCompTraceDiff(FidelityComputer):
                     evo_grad = dyn._get_prop_grad(k, j).dot(fwd_evo)
                     if k+1 < n_ts:
                         evo_grad = dyn._onwd_evo[k+1].dot(evo_grad)
+                    if self.vectorized_evo:
+                        evo_grad = vec2mat(evo_grad)
                     g = -2*self.scale_factor*np.real(_trace(
                                     evo_f_diff.conj().T.dot(evo_grad)))
                 if np.isnan(g):
@@ -724,7 +761,7 @@ class FidCompTraceDiffApprox(FidCompTraceDiff):
     epsilon : float
         control amplitude offset to use when approximating the gradient wrt
         a timeslot control amplitude
-    
+
     """
     def reset(self):
         FidelityComputer.reset(self)
