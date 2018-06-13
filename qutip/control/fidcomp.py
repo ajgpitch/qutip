@@ -625,15 +625,7 @@ class FidCompTraceDiff(FidelityComputer):
             dyn.compute_evolution()
             n_ts = dyn.num_tslots
             evo_final = dyn._fwd_evo[n_ts]
-            evo_targ = dyn._target
-            if self.vectorized_evo:
-                if dyn.oper_dtype == Qobj:
-                    evo_final = vector_to_operator(evo_final)
-                    evo_targ = vector_to_operator(evo_targ)
-                else:
-                    evo_final = vec2mat(evo_final)
-                    evo_targ = vec2mat(evo_targ)
-            evo_f_diff = evo_targ - evo_final
+            evo_f_diff = dyn._target - evo_final
             if self.log_level <= logging.DEBUG_VERBOSE:
                 logger.log(logging.DEBUG_VERBOSE, "Calculating TraceDiff "
                            "fidelity...\n Target:\n{}\n Evo final:\n{}\n"
@@ -710,15 +702,7 @@ class FidCompTraceDiff(FidelityComputer):
 
 
         evo_final = dyn._fwd_evo[n_ts]
-        evo_targ = dyn._target
-        if self.vectorized_evo:
-            if dyn.oper_dtype == Qobj:
-                evo_final = vector_to_operator(evo_final)
-                evo_targ = vector_to_operator(evo_targ)
-            else:
-                evo_final = vec2mat(evo_final)
-                evo_targ = vec2mat(evo_targ)
-        evo_f_diff = evo_targ - evo_final
+        evo_f_diff = dyn._target - evo_final
         for j in range(n_ctrls):
             for k in range(n_ts):
                 fwd_evo = dyn._fwd_evo[k]
@@ -726,9 +710,6 @@ class FidCompTraceDiff(FidelityComputer):
                     evo_grad = dyn._get_prop_grad(k, j)*fwd_evo
                     if k+1 < n_ts:
                         evo_grad = dyn._onwd_evo[k+1]*evo_grad
-                    if self.vectorized_evo:
-                        evo_grad = vector_to_operator(evo_grad)
-
                     # Note that the value should have not imagnary part, so
                     # using np.real, just avoids the complex casting warning
                     g = -2*self.scale_factor*np.real(
@@ -737,8 +718,7 @@ class FidCompTraceDiff(FidelityComputer):
                     evo_grad = dyn._get_prop_grad(k, j).dot(fwd_evo)
                     if k+1 < n_ts:
                         evo_grad = dyn._onwd_evo[k+1].dot(evo_grad)
-                    if self.vectorized_evo:
-                        evo_grad = vec2mat(evo_grad)
+
                     g = -2*self.scale_factor*np.real(_trace(
                                     evo_f_diff.conj().T.dot(evo_grad)))
                 if np.isnan(g):
