@@ -143,7 +143,6 @@ class Optimizer(object):
 
     def reset(self):
         self.log_level = 20
-        self.stats = None
         self.disp_conv_msg = False
         self.method = 'L-BFGS-B'
         self.alg = 'GRAPE'
@@ -155,8 +154,8 @@ class Optimizer(object):
         self.amp_ubound = None
         self.bounds = None
         self.num_iter = 0
-        self.num_cost_calls = 0
-        self.num_grad_calls = 0
+        self.num_cost_evals = 0
+        self.num_grad_evals = 0
         self.wall_time_optim_start = 0.0
         self.wall_time_optim_end = 0.0
 
@@ -164,6 +163,32 @@ class Optimizer(object):
         self.cost_target = 1.0e-6
         self.max_cost_calls = 1000
         self.max_wall_time = 600.0
+
+    def _get_method_options_from_attribs(self):
+        """Create method_options dictionary for the scipy.optimize.minimize
+        function based on the attributes of this object.
+        """
+        mo = {
+                }
+
+        if 'max_metric_corr' in mo and not 'maxcor' in mo:
+            mo['maxcor'] = mo['max_metric_corr']
+        elif hasattr(self, 'max_metric_corr') and not 'maxcor' in mo:
+            mo['maxcor'] = self.max_metric_corr
+        if 'accuracy_factor' in mo  and not 'ftol' in mo:
+            mo['ftol'] = mo['accuracy_factor']
+        elif hasattr(tc, 'accuracy_factor') and not 'ftol' in mo:
+            mo['ftol'] = tc.accuracy_factor
+        if tc.max_iterations > 0 and not 'maxiter' in mo:
+            mo['maxiter'] = tc.max_iterations
+        if tc.max_fid_func_calls > 0 and not 'maxfev' in mo:
+            mo['maxfev'] = tc.max_fid_func_calls
+        if tc.min_gradient_norm > 0 and not 'gtol' in mo:
+            mo['gtol'] = tc.min_gradient_norm
+        if not 'disp' in mo:
+            mo['disp'] = self.disp_conv_msg
+
+        return mo
 
     @property
     def log_level(self):
@@ -202,8 +227,8 @@ class Optimizer(object):
 
         self.approx_grad = True
         self.num_iter = 0
-        self.num_cost_calls = 0
-        self.num_grad_calls = 0
+        self.num_cost_evals = 0
+        self.num_grad_evals = 0
 
     def optim_end(self):
         if self.ctrl_solver.integ_rhs_tidyup:
@@ -363,13 +388,9 @@ class Optimizer(object):
         The error is checked against the target, and the optimisation is
         terminated if the target has been achieved.
         """
-        self.num_cost_calls += 1
+        self.num_cost_evals += 1
         # *** update stats ***
-        if self.stats is not None:
-            self.stats.num_cost_calls = self.num_fid_func_calls
-            if self.log_level <= logging.DEBUG:
-                logger.debug("cost error call {}".format(
-                    self.stats.num_cost_calls))
+        # TODO: Update stats
 
         #print(args[0])
         self._update_ctrl_params(args[0])
@@ -387,58 +408,11 @@ class Optimizer(object):
         if self.ctrl_solver.cost <= self.cost_target:
             raise terminator.GoalAchievedTerminate(self.ctrl_solver.cost)
 
-        if self.num_cost_calls > self.max_cost_calls:
+        if self.num_cost_evals > self.max_cost_calls:
             raise terminator.MaxCostCallTerminate()
 
 
         return self.ctrl_solver.cost
-
-#    def fid_err_grad_wrapper(self, *args):
-#        """
-#        Get the gradient of the fidelity error with respect to all of the
-#        variables, i.e. the ctrl amplidutes in each timeslot
-#
-#        This is called by generic optimisation algorithm as the gradients of
-#        func to the minimised wrt the variables. The argument is the current
-#        variable values, i.e. control amplitudes, passed as
-#        a flat array. Hence these are reshaped as [nTimeslots, n_ctrls]
-#        and then used to update the stored ctrl values (if they have changed)
-#
-#        Although the optimisation algorithms have a check within them for
-#        function convergence, i.e. local minima, the sum of the squares
-#        of the normalised gradient is checked explicitly, and the
-#        optimisation is terminated if this is below the min_gradient_norm
-#        condition
-#        """
-#        # *** update stats ***
-#        self.num_grad_func_calls += 1
-#        if self.stats is not None:
-#            self.stats.num_grad_func_calls = self.num_grad_func_calls
-#            if self.log_level <= logging.DEBUG:
-#                logger.debug("gradient call {}".format(
-#                    self.stats.num_grad_func_calls))
-#        amps = self._get_ctrl_amps(args[0].copy())
-#        self.dynamics.update_ctrl_amps(amps)
-#        fid_comp = self.dynamics.fid_computer
-#        # gradient_norm_func is a pointer to the function set in the config
-#        # that returns the normalised gradients
-#        grad = fid_comp.get_fid_err_gradient()
-#
-#        if self.iter_summary:
-#            self.iter_summary.grad_func_call_num = self.num_grad_func_calls
-#            self.iter_summary.grad_norm = fid_comp.grad_norm
-#
-#        if self.dump:
-#            if self.dump.dump_grad_norm:
-#                self.dump.update_grad_norm_log(fid_comp.grad_norm)
-#
-#            if self.dump.dump_grad:
-#                self.dump.update_grad_log(grad)
-#
-#        tc = self.termination_conditions
-#        if fid_comp.grad_norm < tc.min_gradient_norm:
-#            raise terminator.GradMinReachedTerminate(fid_comp.grad_norm)
-#        return grad.flatten()
 
     def _iter_step(self, *args):
         """
