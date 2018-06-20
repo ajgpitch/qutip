@@ -161,7 +161,7 @@ class Optimizer(object):
 
         # Default termination conditions
         self.cost_target = 1.0e-6
-        self.max_cost_calls = 1000
+        self.max_cost_evals = 1000
         self.max_wall_time = 600.0
 
     def _get_method_options_from_attribs(self):
@@ -408,7 +408,7 @@ class Optimizer(object):
         if self.ctrl_solver.cost <= self.cost_target:
             raise terminator.GoalAchievedTerminate(self.ctrl_solver.cost)
 
-        if self.num_cost_evals > self.max_cost_calls:
+        if self.num_cost_evals > self.max_cost_evals:
             raise terminator.MaxCostCallTerminate()
 
 
