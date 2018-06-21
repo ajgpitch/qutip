@@ -111,8 +111,8 @@ class OptimResult(object):
         self.grad_norm_min_reached = False
         self.num_iter = 0
         self.max_iter_exceeded = False
-        self.num_infidelity_calls = 0
-        self.max_infidelity_calls_exceeded = False
+        self.max_cost_eval_exceeded = False
+        self.num_cost_evals = 0
         self.wall_time = 0.0
         self.wall_time_limit_exceeded = False
         self.termination_reason = "not started yet"
@@ -136,8 +136,9 @@ class OptimResult(object):
         optimisers and outcomes
         """
         self.num_iter = optim.num_iter
-        self.num_cost_calls = optim.num_cost_calls
-        self.wall_time = optim.wall_time_optim_end - optim.wall_time_optim_start
+        self.num_cost_evals = optim.num_cost_evals
+        self.wall_time = (optim.wall_time_optim_end
+                          - optim.wall_time_optim_start)
         self.final_cost = optim.ctrl_solver.cost
         # FIXME:
         #self.grad_norm_final = dyn.fid_computer.grad_norm
@@ -147,3 +148,7 @@ class OptimResult(object):
 #            result.evo_full_final = final_evo
 #        else:
 #            result.evo_full_final = Qobj(final_evo, dims=dyn.sys_dims)
+        if self.num_iter > optim.max_iter:
+            self.max_iter_exceeded = True
+        if self.num_cost_evals > optim.max_cost_evals:
+            self.max_cost_eval_exceeded = True

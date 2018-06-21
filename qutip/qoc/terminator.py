@@ -71,14 +71,23 @@ class MaxWallTimeTerminate(OptimizationTerminate):
     def __init__(self):
         self.reason = "Max wall time exceeded"
 
-class MaxCostCallTerminate(OptimizationTerminate):
+class MaxCostEvalTerminate(OptimizationTerminate):
     """
     Exception raised to terminate execution when the number of calls to the
-    fidelity error function has exceeded the maximum
+    cost function has exceeded the maximum
 
     """
     def __init__(self):
-        self.reason = "Number of fidelity error calls has exceeded the maximum"
+        self.reason = "Number of cost evaluations has exceeded the maximum"
+
+class MaxIterTerminate(OptimizationTerminate):
+    """
+    Exception raised to terminate execution when the number of iterations
+    has exceeded the maximum
+
+    """
+    def __init__(self):
+        self.reason = "Number of iterations has exceeded the maximum"
 
 class GradMinReachedTerminate(OptimizationTerminate):
     """

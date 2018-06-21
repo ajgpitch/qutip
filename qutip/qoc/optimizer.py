@@ -144,7 +144,7 @@ class Optimizer(object):
     def reset(self):
         self.log_level = 20
         self.disp_conv_msg = False
-        self.method = 'L-BFGS-B'
+        self._method = 'L-BFGS-B'
         self.alg = 'GRAPE'
         self.param_atol = qset.atol
         #FIXME: make pvt
@@ -158,35 +158,54 @@ class Optimizer(object):
         self.num_grad_evals = 0
         self.wall_time_optim_start = 0.0
         self.wall_time_optim_end = 0.0
+        self.method_options = None
 
         # Default termination conditions
         self.cost_target = 1.0e-6
-        self.max_cost_evals = 1000
+        # maxiter
+        self.max_iter = 1000
+        # maxfun
+        self.max_cost_evals = 10000
         self.max_wall_time = 600.0
+        # ftol (note scipy default is 2.220446049250313e-09
+        self.cost_eval_tol = None
+        # gtol
+        self.grad_eval_tol = None
+        # eps
+        self.approx_grad_step_size = None
+
+
+    @property
+    def method(self):
+        return self._method
+
+    @method.setter
+    def method(self, value):
+        try:
+            self._method = value.upper()
+        except Exception as e:
+            raise e.__class__("Invalid value '{}' for Optimizer method"
+                              ". {}".format(value, e))
 
     def _get_method_options_from_attribs(self):
         """Create method_options dictionary for the scipy.optimize.minimize
         function based on the attributes of this object.
         """
-        mo = {
-                }
 
-        if 'max_metric_corr' in mo and not 'maxcor' in mo:
-            mo['maxcor'] = mo['max_metric_corr']
-        elif hasattr(self, 'max_metric_corr') and not 'maxcor' in mo:
-            mo['maxcor'] = self.max_metric_corr
-        if 'accuracy_factor' in mo  and not 'ftol' in mo:
-            mo['ftol'] = mo['accuracy_factor']
-        elif hasattr(tc, 'accuracy_factor') and not 'ftol' in mo:
-            mo['ftol'] = tc.accuracy_factor
-        if tc.max_iterations > 0 and not 'maxiter' in mo:
-            mo['maxiter'] = tc.max_iterations
-        if tc.max_fid_func_calls > 0 and not 'maxfev' in mo:
-            mo['maxfev'] = tc.max_fid_func_calls
-        if tc.min_gradient_norm > 0 and not 'gtol' in mo:
-            mo['gtol'] = tc.min_gradient_norm
-        if not 'disp' in mo:
-            mo['disp'] = self.disp_conv_msg
+        # The only option that is common to all methods is maxiter
+        mo = {'maxiter': self.max_iter}
+
+        def add_if_not_none(key, value):
+            if value is not None:
+                mo[key] = value
+
+        if self.method == 'L-BFGS-B':
+            add_if_not_none('maxfun', self.max_cost_evals)
+            add_if_not_none('ftol', self.cost_eval_tol)
+            add_if_not_none('gtol', self.grad_eval_tol)
+            add_if_not_none('eps', self.approx_grad_step_size)
+
+        #TODO: Add other methods that we wish to support
 
         return mo
 
@@ -210,7 +229,7 @@ class Optimizer(object):
         result = optimresult.OptimResult()
         return result
 
-    def init_optim(self):
+    def init_optim(self, method_options=None):
         """
         Check optimiser attribute status and passed parameters before
         running the optimisation.
@@ -229,6 +248,11 @@ class Optimizer(object):
         self.num_iter = 0
         self.num_cost_evals = 0
         self.num_grad_evals = 0
+
+        self.method_options = self._get_method_options_from_attribs()
+        if not method_options is None:
+            for key in method_options:
+                self.method_options[key] = method_options[key]
 
     def optim_end(self):
         if self.ctrl_solver.integ_rhs_tidyup:
@@ -269,7 +293,7 @@ class Optimizer(object):
         else:
             self.bounds = bounds
 
-    def optimize_ctrls(self):
+    def optimize_ctrls(self, method_options=None):
         """
         This default function optimisation method is a wrapper to the
         scipy.optimize.minimize function.
@@ -327,7 +351,7 @@ class Optimizer(object):
                 method=self.method,
                 jac=jac,
                 bounds=self.bounds,
-#                options=self.method_options,
+                options=self.method_options,
                 callback=self._iter_step)
 
             self._update_ctrl_params(opt_res.x)
@@ -409,7 +433,7 @@ class Optimizer(object):
             raise terminator.GoalAchievedTerminate(self.ctrl_solver.cost)
 
         if self.num_cost_evals > self.max_cost_evals:
-            raise terminator.MaxCostCallTerminate()
+            raise terminator.MaxCostEvalTerminate()
 
 
         return self.ctrl_solver.cost
@@ -421,10 +445,15 @@ class Optimizer(object):
         """
         self.num_iter += 1
 
+        print("Iter {}".format(self.num_iter))
         if self.log_level <= logging.DEBUG:
             logger.debug("Iteration callback {}".format(self.num_iter))
 
         wall_time = timeit.default_timer() - self.wall_time_optim_start
+
+        # This not reallyunnessary, as handled in scipy, but here anyway
+        if self.num_iter > self.max_iter:
+            raise terminator.MaxIterTerminate()
 
         if wall_time > self.max_wall_time:
             raise terminator.MaxWallTimeTerminate()
@@ -441,8 +470,10 @@ class Optimizer(object):
             result.wall_time_limit_exceeded = True
         elif isinstance(except_term, terminator.GradMinReachedTerminate):
             result.grad_norm_min_reached = True
-        elif isinstance(except_term, terminator.MaxCostCallTerminate):
-            result.max_cost_call_exceeded = True
+        elif isinstance(except_term, terminator.MaxIterTerminate):
+            result.max_iter_exceeded = True
+        elif isinstance(except_term, terminator.MaxCostEvalTerminate):
+            result.max_cost_eval_exceeded = True
 
     def _compare_optim_params(self, new_params):
         """
