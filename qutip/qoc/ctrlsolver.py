@@ -434,7 +434,8 @@ class ControlSolverPWC(ControlSolver):
                  drift_dyn_gen, ctrl_dyn_gen,
                  tslot_duration, tlist=None, initial_amps=None,
                  ctrl_tslot_mask=None,
-                 solver_combines_dyn_gen=True):
+                 evo_solver_combines_dyn_gen=True,
+                 build_evo_solver_dyn_gen=True):
         self.reset()
         ControlSolver.__init__(self, evo_solver, cost_meter, initial, target,
                                drift_dyn_gen, ctrl_dyn_gen)
@@ -445,7 +446,8 @@ class ControlSolverPWC(ControlSolver):
         self.ctrl_tslot_mask = self._check_ctrl_tslot_mask(ctrl_tslot_mask)
         # The plan is to use the solver internal combining of
         # dynamics generators
-        self.solver_combines_dyn_gen = solver_combines_dyn_gen
+        self.evo_solver_combines_dyn_gen = evo_solver_combines_dyn_gen
+        self.build_evo_solver_dyn_gen = build_evo_solver_dyn_gen
 
     def reset(self):
         ControlSolver.reset(self)
@@ -749,11 +751,11 @@ class ControlSolverPWC(ControlSolver):
 
     def _init_dyn_gen(self):
 
-        if self.solver_combines_dyn_gen:
+        if self.build_evo_solver_dyn_gen:
             if not self._td_dyn_gen_constructed:
                 self.evo_solver.dyn_gen = self._construct_td_dyn_gen()
-            else:
-                self.evo_solver.args['qtrl_tsctrlamp'] = self.ctrl_amps
+        if self.evo_solver_combines_dyn_gen:
+            self.evo_solver.args['qtrl_tsctrlamp'] = self.ctrl_amps
             # TODO: Check td_args - is this possible?
         else:
             self._dyn_gen = [self._get_combined_dyn_gen(k)
@@ -842,7 +844,7 @@ class ControlSolverPWC(ControlSolver):
             ]
 
     def _update_dyn_gen(self):
-        if self.solver_combines_dyn_gen:
+        if self.evo_solver_combines_dyn_gen:
             self.evo_solver.args['qtrl_tsctrlamp'] = self.ctrl_amps
         else:
             for k in range(self._num_tslots):
@@ -947,7 +949,7 @@ class ControlSolverPWC(ControlSolver):
             else:
                 self.evo_solver.options.rhs_reuse = self.integ_rhs_reuse
 
-            if self.solver_combines_dyn_gen:
+            if self.evo_solver_combines_dyn_gen:
                 # Add td globals
 #                td_globals = {'qtrl_init_ts': True,
 #                              'qtrl_k': 0,
@@ -986,7 +988,7 @@ class ControlSolverPWC(ControlSolver):
         self.evo_solver_result = self.evo_solver.run(initial=self.initial,
                                                      tlist=tlist)
         #print("amps after evo solve:\n{}".format(self.ctrl_amps))
-        if self.solver_combines_dyn_gen:
+        if self.evo_solver_combines_dyn_gen:
             self._integ_tdname = qutip.solver.config.tdname
         self.cost = self.cost_meter.compute_cost(
                                 self.evo_solver_result.states[-1], self.target)
