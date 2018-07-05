@@ -1,1 +1,5 @@
 Check the param_atol. Issue warning if greater than infid target
+- Only use tlist in final evolution
+
+- cythonize map evolution
+- _safe_mode=False for all but first evo solve
