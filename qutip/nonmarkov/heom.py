@@ -561,7 +561,7 @@ class HSolverDL(HEOMSolver):
                     r.set_f_params(L_helems.data, L_helems.indices,
                                                        L_helems.indptr)
                 r.integrate(r.t + dt[t_idx])
-                rho = Qobj(r.y[:sup_dim].reshape(rho0.shape), dims=rho0.dims)
+                rho = Qobj(r.y[:sup_dim].reshape(rho0.shape).T, dims=rho0.dims)
                 output.states.append(rho)
 
         if stats:
