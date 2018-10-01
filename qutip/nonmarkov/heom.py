@@ -39,6 +39,8 @@ hierarchy equations of motion (HEOM).
 # Authors: Neill Lambert, Anubhav Vardhan, Alexander Pitchford
 # Contact: nwlambert@gmail.com
 
+import types
+from functools import partial
 import timeit
 import numpy as np
 #from scipy.misc import factorial
@@ -151,6 +153,8 @@ class HEOMSolver(object):
 
         self.ode = None
         self.configured = False
+
+        self._td_H_sys = False
 
     def configure(self, H_sys, coup_op, coup_strength, temperature,
                      N_cut, N_exp, planck=None, boltzmann=None,
@@ -268,6 +272,9 @@ class HSolverDL(HEOMSolver):
         self.cut_freq = 1.0
         self.renorm = False
         self.bnd_cut_approx = False
+
+    def _get_H_sys0(self, H_sys):
+        """return the system Hamiltonian at t=0. Also runs td format checks"""
 
     def configure(self, H_sys, coup_op, coup_strength, temperature,
                      N_cut, N_exp, cut_freq, planck=None, boltzmann=None,
@@ -413,43 +420,76 @@ class HSolverDL(HEOMSolver):
             stats.add_count('Num hierarchy elements', N_he, ss_conf)
             stats.add_count('Num he interactions', N_he_interact, ss_conf)
 
-        # Setup Liouvillian
-        if stats: 
-            start_louvillian = timeit.default_timer()
-        
-        H_he = zcsr_kron(unit_helems, liouvillian(H_sys).data)
-
-        L_helems += H_he
-
-        if stats:
-            stats.add_timing('Liouvillian contruct',
-                             timeit.default_timer() - start_louvillian,
-                            ss_conf)
-
-        if stats: start_integ_conf = timeit.default_timer()
-
-        r = scipy.integrate.ode(cy_ode_rhs)
-
-        r.set_f_params(L_helems.data, L_helems.indices, L_helems.indptr)
-        r.set_integrator('zvode', method=options.method, order=options.order,
-                         atol=options.atol, rtol=options.rtol,
-                         nsteps=options.nsteps, first_step=options.first_step,
-                         min_step=options.min_step, max_step=options.max_step)
+        self._configure_integ(unit_helems, L_helems, H_sys, options, stats)
 
         if stats:
             time_now = timeit.default_timer()
-            stats.add_timing('Liouvillian contruct',
-                             time_now - start_integ_conf,
-                            ss_conf)
+
             if ss_conf.total_time is None:
                 ss_conf.total_time = time_now - start_config
             else:
                 ss_conf.total_time += time_now - start_config
 
-        self._ode = r
         self._N_he = N_he
         self._sup_dim = sup_dim
         self._configured = True
+
+    def _configure_integ(self, unit_helems, L_helems, H_sys, options, stats):
+
+        if stats:
+            start_integ_conf = timeit.default_timer()
+            ss_conf = stats.sections.get('config')
+
+        str_Hsys_fmt_error = "H_sys must be a Obj or supported td format"
+        L_list = [L_helems]
+        if isinstance(H_sys, list):
+            # assume there must be some td elements
+            for h_comp in H_sys:
+                if isinstance(h_comp, Qobj):
+                    # Constant H components, just add it
+                    H_he = zcsr_kron(unit_helems, liouvillian(h_comp).data)
+                    L_helems += H_he
+                elif isinstance(h_comp, list) and len(h_comp) == 2:
+                    H = h_comp[0]
+                    h_func = h_comp[1]
+                    if not isinstance(h_comp[0], Qobj):
+                        raise ValueError(str_Hsys_fmt_error)
+                    if not isinstance(h_func, (types.FunctionType,
+                                        types.BuiltinFunctionType, partial)):
+                        raise ValueError("Only function type time-dependence"
+                                         "currently supported")
+                    H_he = zcsr_kron(unit_helems, liouvillian(H).data)
+                    L_list.append([H_he, h_func])
+                else:
+                    raise ValueError(str_Hsys_fmt_error)
+
+        elif isinstance(H_sys, Qobj):
+            H_he = zcsr_kron(unit_helems, liouvillian(H_sys).data)
+            L_helems += H_he
+
+        else:
+            raise ValueError(str_Hsys_fmt_error)
+
+        if len(L_list) == 1:
+            self._td_H_sys = False
+            r = scipy.integrate.ode(cy_ode_rhs)
+            r.set_f_params(L_helems.data, L_helems.indices, L_helems.indptr)
+        else:
+            self._td_H_sys = True
+            r = scipy.integrate.ode(_dsuper_list_td)
+            #TODO need to add args here
+            r.set_f_params(L_list)
+
+        r.set_integrator('zvode', method=options.method, order=options.order,
+                         atol=options.atol, rtol=options.rtol,
+                         nsteps=options.nsteps, first_step=options.first_step,
+                         min_step=options.min_step, max_step=options.max_step)
+        self._ode = r
+        if stats:
+            time_now = timeit.default_timer()
+            stats.add_timing('Integrator config',
+                             time_now - start_integ_conf,
+                            ss_conf)
 
     def run(self, rho0, tlist):
         """
@@ -624,3 +664,26 @@ def _pad_csr(A, row_scale, col_scale, insertrow=0, insertcol=0):
         raise ValueError("insertrow must be >= 0 and < row_scale")
 
     return A
+
+def _dsuper_list_td(t, y, L_list):#, args):
+
+    L_tot = None
+
+    L = L_list[0][0] * L_list[0][1](t)#, args)
+    for n in range(0, len(L_list)):
+        for l_comp in L_list:
+            if isinstance(l_comp, list):
+                L = l_comp[0] * l_comp[1](t)
+            else:
+                L = l_comp
+        if L_tot:
+            L_tot += L
+        else:
+            L_tot = L
+
+    return _ode_super_func(t, y, L)
+
+def _ode_super_func(t, y, data):
+    #ym = vec2mat(y)
+    #return (data*ym).ravel('F')
+    return (data*y)
