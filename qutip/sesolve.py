@@ -805,6 +805,8 @@ def _generic_ode_solve(r, psi0, tlist, e_ops, opt, progress_bar, dims=None):
     output.solver = "sesolve"
     output.times = tlist
 
+    print("Solving with init state:\n{}".format(psi0))
+
     if psi0.isunitary:
         oper_evo = True
         oper_n = dims[0][0]
@@ -866,7 +868,12 @@ def _generic_ode_solve(r, psi0, tlist, e_ops, opt, progress_bar, dims=None):
 
         if opt.normalize_output:
             # cdata *= _get_norm_factor(cdata, oper_evo)
-            cdata *= norm_dim_factor / la_norm(cdata)
+            #print("la_norm(cdata): {}".format(la_norm(cdata)))
+            #print("Normalising with factor: {}".format(norm_dim_factor))
+            factr = norm_dim_factor / la_norm(cdata)
+            if not np.isclose(factr, 1):
+                print("Normalising with factor: {}".format(factr))
+            cdata *= factr
             if oper_evo:
                 r.set_initial_value(cdata.ravel('F'), r.t)
             else:
@@ -897,7 +904,10 @@ def _generic_ode_solve(r, psi0, tlist, e_ops, opt, progress_bar, dims=None):
     if opt.store_final_state:
         cdata = get_curr_state_data()
         if opt.normalize_output:
-            cdata *= norm_dim_factor / la_norm(cdata)
+            factr = norm_dim_factor / la_norm(cdata)
+            if not np.isclose(factr, 1):
+                print("Normalising (final) with factor: {}".format(factr))
+            cdata *= factr
         output.final_state = Qobj(cdata, dims=dims)
 
     return output
