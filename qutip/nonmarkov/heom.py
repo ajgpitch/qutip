@@ -217,6 +217,125 @@ class HEOMSolver(object):
         stats.header = "Hierarchy Solver Stats"
         return stats
 
+    def _check_H_sys(self, H_sys):
+        """
+        Check that the format of H_sys is vaild. This is either constant
+        or valid time-dependent format.
+
+        Returns
+        -------
+            dims : list
+            n_comp : int
+                number of components
+            n_td : int
+                number of time-dependent components
+
+        """
+        str_Hsys_fmt_error = "H_sys must be a Qobj or supported td format"
+        n_comp = 0
+        n_td = 1
+        dims = None
+        def check_dims(chk_dims):
+            nonlocal dims
+            if dims is None:
+                dims = chk_dims
+            else:
+                if dims != chk_dims:
+                    raise ValueError("Incompatible dims for H_sys component"
+                                     " {}".format(n_comp))
+        if isinstance(H_sys, list):
+            for h_comp in H_sys:
+                if isinstance(h_comp, Qobj):
+                    # Constant H component
+                    H = h_comp
+                elif isinstance(h_comp, list) and len(h_comp) == 2:
+                    H = h_comp[0]
+                    h_func = h_comp[1]
+                    if not isinstance(h_comp[0], Qobj):
+                        raise ValueError(str_Hsys_fmt_error)
+                    if not isinstance(h_func, (types.FunctionType,
+                                        types.BuiltinFunctionType, partial)):
+                        raise ValueError("Only function type time-dependence"
+                                         "currently supported")
+                    n_td += 1
+                else:
+                    raise ValueError(str_Hsys_fmt_error)
+                check_dims(H.dims)
+                n_comp += 1
+
+        elif isinstance(H_sys, Qobj):
+            dims = H_sys.dims
+            n_comp = 1
+
+        else:
+            raise ValueError(str_Hsys_fmt_error)
+
+        return dims, n_comp, n_td
+
+    def _configure_integ(self, unit_helems, L_helems, H_sys, options, stats):
+
+        # format has already been checked in _check_H_sys, so just
+        # make the L_list
+        str_Hsys_fmt_error = ("H_sys must be a Qobj or supported td format."
+                              "H_sys format should have been checked "
+                              "in _check_H_sys!")
+        if stats:
+            start_integ_conf = timeit.default_timer()
+            ss_conf = stats.sections.get('config')
+
+        n_td = 0
+        L_list = [L_helems]
+        if isinstance(H_sys, list):
+            # check for td elements
+            for h_comp in H_sys:
+                if isinstance(h_comp, Qobj):
+                    # Constant H component, just add it
+                    H_he = zcsr_kron(unit_helems, liouvillian(h_comp).data)
+                    L_helems += H_he
+                elif isinstance(h_comp, list) and len(h_comp) == 2:
+                    # time dependent H component
+                    H = h_comp[0]
+                    h_func = h_comp[1]
+                    H_he = zcsr_kron(unit_helems, liouvillian(H).data)
+                    L_list.append([H_he, h_func])
+                    n_td += 1
+                else:
+                    raise ValueError(str_Hsys_fmt_error)
+
+        elif isinstance(H_sys, Qobj):
+            H_he = zcsr_kron(unit_helems, liouvillian(H_sys).data)
+            L_helems += H_he
+
+        else:
+            raise ValueError(str_Hsys_fmt_error)
+
+
+        if len(L_list) == 1:
+            self._td_H_sys = False
+            r = scipy.integrate.ode(cy_ode_rhs)
+            r.set_f_params(L_helems.data, L_helems.indices, L_helems.indptr)
+        else:
+            self._td_H_sys = True
+            r = scipy.integrate.ode(_dsuper_list_td)
+            #TODO need to add args here
+            r.set_f_params(L_list)
+
+        r.set_integrator('zvode', method=options.method, order=options.order,
+                         atol=options.atol, rtol=options.rtol,
+                         nsteps=options.nsteps, first_step=options.first_step,
+                         min_step=options.min_step, max_step=options.max_step)
+        self._ode = r
+        if stats:
+            if n_td == 0:
+                stats.add_message('integ td', 'constant', ss_conf)
+            else:
+                stats.add_message('integ td',
+                                  '{} td components'.format(n_td), ss_conf)
+            time_now = timeit.default_timer()
+            stats.add_timing('Integrator config',
+                             time_now - start_integ_conf,
+                            ss_conf)
+
 class HSolverDL(HEOMSolver):
     """
     HEOM solver based on the Drude-Lorentz model for spectral density.
@@ -273,9 +392,6 @@ class HSolverDL(HEOMSolver):
         self.renorm = False
         self.bnd_cut_approx = False
 
-    def _get_H_sys0(self, H_sys):
-        """return the system Hamiltonian at t=0. Also runs td format checks"""
-
     def configure(self, H_sys, coup_op, coup_strength, temperature,
                      N_cut, N_exp, cut_freq, planck=None, boltzmann=None,
                      renorm=None, bnd_cut_approx=None,
@@ -313,9 +429,10 @@ class HSolverDL(HEOMSolver):
             norm_plus, norm_minus = self._calc_renorm_factors()
             if stats:
                 stats.add_message('options', 'renormalisation', ss_conf)
-        # Dimensions et by system
+        # Dimensions set by system
+        sys_dims = self._check_H_sys(H_sys)[0]
         N_temp = 1
-        for i in H_sys.dims[0]:
+        for i in sys_dims[0]:
             N_temp *= i
         sup_dim = N_temp**2
         unit_sys = qeye(N_temp)
@@ -419,6 +536,7 @@ class HSolverDL(HEOMSolver):
                             ss_conf)
             stats.add_count('Num hierarchy elements', N_he, ss_conf)
             stats.add_count('Num he interactions', N_he_interact, ss_conf)
+            stats.add_count('nnz L_helems', L_helems.nnz, ss_conf)
 
         self._configure_integ(unit_helems, L_helems, H_sys, options, stats)
 
@@ -433,63 +551,6 @@ class HSolverDL(HEOMSolver):
         self._N_he = N_he
         self._sup_dim = sup_dim
         self._configured = True
-
-    def _configure_integ(self, unit_helems, L_helems, H_sys, options, stats):
-
-        if stats:
-            start_integ_conf = timeit.default_timer()
-            ss_conf = stats.sections.get('config')
-
-        str_Hsys_fmt_error = "H_sys must be a Obj or supported td format"
-        L_list = [L_helems]
-        if isinstance(H_sys, list):
-            # assume there must be some td elements
-            for h_comp in H_sys:
-                if isinstance(h_comp, Qobj):
-                    # Constant H components, just add it
-                    H_he = zcsr_kron(unit_helems, liouvillian(h_comp).data)
-                    L_helems += H_he
-                elif isinstance(h_comp, list) and len(h_comp) == 2:
-                    H = h_comp[0]
-                    h_func = h_comp[1]
-                    if not isinstance(h_comp[0], Qobj):
-                        raise ValueError(str_Hsys_fmt_error)
-                    if not isinstance(h_func, (types.FunctionType,
-                                        types.BuiltinFunctionType, partial)):
-                        raise ValueError("Only function type time-dependence"
-                                         "currently supported")
-                    H_he = zcsr_kron(unit_helems, liouvillian(H).data)
-                    L_list.append([H_he, h_func])
-                else:
-                    raise ValueError(str_Hsys_fmt_error)
-
-        elif isinstance(H_sys, Qobj):
-            H_he = zcsr_kron(unit_helems, liouvillian(H_sys).data)
-            L_helems += H_he
-
-        else:
-            raise ValueError(str_Hsys_fmt_error)
-
-        if len(L_list) == 1:
-            self._td_H_sys = False
-            r = scipy.integrate.ode(cy_ode_rhs)
-            r.set_f_params(L_helems.data, L_helems.indices, L_helems.indptr)
-        else:
-            self._td_H_sys = True
-            r = scipy.integrate.ode(_dsuper_list_td)
-            #TODO need to add args here
-            r.set_f_params(L_list)
-
-        r.set_integrator('zvode', method=options.method, order=options.order,
-                         atol=options.atol, rtol=options.rtol,
-                         nsteps=options.nsteps, first_step=options.first_step,
-                         min_step=options.min_step, max_step=options.max_step)
-        self._ode = r
-        if stats:
-            time_now = timeit.default_timer()
-            stats.add_timing('Integrator config',
-                             time_now - start_integ_conf,
-                            ss_conf)
 
     def run(self, rho0, tlist):
         """
@@ -668,20 +729,17 @@ def _pad_csr(A, row_scale, col_scale, insertrow=0, insertcol=0):
 def _dsuper_list_td(t, y, L_list):#, args):
 
     L_tot = None
-
-    L = L_list[0][0] * L_list[0][1](t)#, args)
-    for n in range(0, len(L_list)):
-        for l_comp in L_list:
-            if isinstance(l_comp, list):
-                L = l_comp[0] * l_comp[1](t)
-            else:
-                L = l_comp
-        if L_tot:
-            L_tot += L
+    for l_comp in L_list:
+        if isinstance(l_comp, list):
+            L = l_comp[0] * l_comp[1](t)
         else:
+            L = l_comp
+        if L_tot is None:
             L_tot = L
+        else:
+            L_tot += L
 
-    return _ode_super_func(t, y, L)
+    return _ode_super_func(t, y, L_tot)
 
 def _ode_super_func(t, y, data):
     #ym = vec2mat(y)
