@@ -217,6 +217,20 @@ class HEOMSolver(object):
         stats.header = "Hierarchy Solver Stats"
         return stats
 
+    def get_L_helems_info(self, L_helems=None):
+        if L_helems is None:
+            L = self.L_helems
+        if L is None:
+            return 'None'
+        Ld = L.data
+        Lda = np.abs(Ld)
+        info = "shape: {}, nnz: {}".format(L.shape, L.nnz)
+
+        if L.nnz > 0:
+            info += ", min: {}, max: {}, avg(nz): {}".format(
+                    np.min(Lda), np.max(Lda), np.mean(Lda))
+        return info
+
     def _check_H_sys(self, H_sys):
         """
         Check that the format of H_sys is vaild. This is either constant
@@ -476,6 +490,7 @@ class HSolverDL(HEOMSolver):
         N_he_interact = 0
 
         for he_idx in range(N_he):
+            print("L_helems nnz: ", L_helems.nnz)
             he_state = list(idx2he[he_idx])
             n_excite = sum(he_state)
 
@@ -487,6 +502,7 @@ class HSolverDL(HEOMSolver):
 
             op = -sum_n_m_freq*unit_sup
             L_he = cy_pad_csr(op, N_he, N_he, he_idx, he_idx)
+            print("L_he nnz: ", L_he.nnz)
             L_helems += L_he
 
             # Add the neighour interations
@@ -507,6 +523,7 @@ class HSolverDL(HEOMSolver):
                         op = -1j*n_k*op
 
                     L_he = cy_pad_csr(op, N_he, N_he, he_idx, he_idx_neigh)
+                    print("L_he- nnz: ", L_he.nnz)
                     L_helems += L_he
                     N_he_interact += 1
 
@@ -525,10 +542,17 @@ class HSolverDL(HEOMSolver):
                         op = -1j*op
 
                     L_he = cy_pad_csr(op, N_he, N_he, he_idx, he_idx_neigh)
+                    print("L_he+ nnz: ", L_he.nnz)
                     L_helems += L_he
                     N_he_interact += 1
 
                     he_state_neigh[k] = n_k
+
+        print("L_helems end nnz: ", L_helems.nnz)
+        # These are used elsewhere, except as ode params,
+        # which will be set anyway
+        # but they may be useful to someone
+        self.L_helems = L_helems
 
         if stats:
             stats.add_timing('hierarchy contruct',
@@ -536,7 +560,8 @@ class HSolverDL(HEOMSolver):
                             ss_conf)
             stats.add_count('Num hierarchy elements', N_he, ss_conf)
             stats.add_count('Num he interactions', N_he_interact, ss_conf)
-            stats.add_count('nnz L_helems', L_helems.nnz, ss_conf)
+            stats.add_message('L_helems info', self.get_L_helems_info(),
+                              ss_conf)
 
         self._configure_integ(unit_helems, L_helems, H_sys, options, stats)
 
@@ -550,6 +575,7 @@ class HSolverDL(HEOMSolver):
 
         self._N_he = N_he
         self._sup_dim = sup_dim
+
         self._configured = True
 
     def run(self, rho0, tlist):
