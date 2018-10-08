@@ -58,6 +58,9 @@ from qutip.cy.heom import cy_pad_csr
 from qutip.cy.spmath import zcsr_kron
 from qutip.fastsparse import fast_csr_matrix, fast_identity
 
+ODE_FUNC_TYPES = (types.FunctionType, types.BuiltinFunctionType,
+                  types.MethodType, types.BuiltinMethodType,  partial)
+
 
 class HEOMSolver(object):
     """
@@ -321,10 +324,10 @@ class HEOMSolver(object):
                     h_func = h_comp[1]
                     if not isinstance(h_comp[0], Qobj):
                         raise ValueError(str_Hsys_fmt_error)
-                    if not isinstance(h_func, (types.FunctionType,
-                                        types.BuiltinFunctionType, partial)):
-                        raise ValueError("Only function type time-dependence"
-                                         "currently supported")
+                    if not isinstance(h_func, ODE_FUNC_TYPES):
+                        raise TypeError("Invalid type {} 'h_func'. "
+                                "Only function type time-dependence "
+                                "currently supported".format(type(h_func)))
                     n_td += 1
                 else:
                     raise ValueError(str_Hsys_fmt_error)
@@ -355,7 +358,7 @@ class HEOMSolver(object):
         # for now just do it anyway, but its memory greedy
         n_td = 0
         L_const = L_helems.copy()
-        L_list = [L]
+        L_list = [L_const]
         if isinstance(H_sys, list):
             # check for td elements
             for h_comp in H_sys:
@@ -470,7 +473,7 @@ class HSolverDL(HEOMSolver):
         self.bnd_cut_approx = False
 
     def configure(self, H_sys, coup_op, coup_strength, temperature,
-                     N_cut, N_exp, cut_freq, args=None,
+                     N_cut, N_exp, cut_freq, td_type=None, args=None,
                      planck=None, boltzmann=None,
                      renorm=None, bnd_cut_approx=None,
                      options=None, progress_bar=None, stats=None):

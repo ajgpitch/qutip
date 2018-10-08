@@ -265,28 +265,30 @@ class Optimizer(object):
         csol = self.ctrl_solver
         bounds = []
         all_none = True
-        for k in range(csol.num_tslots):
-            for j in range(csol.num_ctrls):
-                if csol.amp_lbound is None:
-                    lb = None
-                else:
-                    if hasattr(csol.amp_lbound, 'len'):
-                        lb = csol.amp_lbound[j]
+        #TODO this is gonna have to be shifted to ctrlsolver
+        if hasattr(csol, 'num_tslots'):
+            for k in range(csol.num_tslots):
+                for j in range(csol.num_ctrls):
+                    if csol.amp_lbound is None:
+                        lb = None
                     else:
-                        lb = csol.amp_lbound
+                        if hasattr(csol.amp_lbound, 'len'):
+                            lb = csol.amp_lbound[j]
+                        else:
+                            lb = csol.amp_lbound
 
-                if csol.amp_ubound is None:
-                    ub = None
-                else:
-                    if hasattr(csol.amp_ubound, 'len'):
-                        ub = csol.amp_ubound[j]
+                    if csol.amp_ubound is None:
+                        ub = None
                     else:
-                        ub = csol.amp_ubound
+                        if hasattr(csol.amp_ubound, 'len'):
+                            ub = csol.amp_ubound[j]
+                        else:
+                            ub = csol.amp_ubound
 
-                if (lb is not None) or (ub is not None):
-                    all_none = False
+                    if (lb is not None) or (ub is not None):
+                        all_none = False
 
-                bounds.append((lb, ub))
+                    bounds.append((lb, ub))
 
         if all_none:
             self.bounds = None

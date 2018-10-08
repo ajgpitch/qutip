@@ -302,7 +302,7 @@ class ControlSolver(object):
                 raise IncompatibleQobjDims("{} dims {} must match {} dims {}"
                             ".".format(desc, q.dims, pair_desc, q_pair.dims))
 
-    def _check_dg(self, dg, name):
+    def _check_dg(self, dg, name, dims=None):
         self._check_dg_oper(dg, name)
 
     def _check_dg_oper(self, dg, name):
